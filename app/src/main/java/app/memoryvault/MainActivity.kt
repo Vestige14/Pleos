@@ -1,75 +1,59 @@
 package app.memoryvault
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import app.memoryvault.domain.DriveState
+import app.memoryvault.service.VoiceMemoService
+import app.memoryvault.ui.AppUiBridge
+import app.memoryvault.ui.MemoryVaultScreen
+import app.memoryvault.ui.MemoryVaultTheme
 
 class MainActivity : ComponentActivity() {
+    private val container get() = (application as MemoryVaultApp).container
+    private var permissionSummary by mutableStateOf(R.string.voice_permissions_needed)
+    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        refreshPermissionSummary()
+        container.refreshReadyNotification()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val ui = AppUiBridge(container) { VoiceMemoService.requestStart(this) }
         setContent {
-            MaterialTheme {
-                Scaffold { insets ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(insets)
-                            .verticalScroll(rememberScrollState())
-                            .padding(32.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.app_name),
-                            style = MaterialTheme.typography.headlineLarge,
-                        )
-                        Text(
-                            text = stringResource(R.string.bootstrap_stage),
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(
-                                modifier = Modifier.padding(24.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.bootstrap_running),
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                                Text(stringResource(R.string.speech_pending))
-                                Text(stringResource(R.string.vehicle_pending))
-                                Text(stringResource(R.string.features_pending))
-                            }
-                        }
-                        Text(
-                            text = stringResource(
-                                R.string.demo_reference,
-                                DemoConfig.DEMO_DATE.toString(),
-                                DemoConfig.DEMO_ZONE.id,
-                            ),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            text = stringResource(R.string.bootstrap_notice),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+            MemoryVaultTheme {
+                MemoryVaultScreen(ui, onRequestPermissions = ::requestVoicePermissions, permissionSummary = permissionSummary)
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshPermissionSummary()
+        container.retryVehicleConnection()
+    }
+
+    private fun requestVoicePermissions() {
+        if (container.driveSnapshot.value.state != DriveState.PARKED) return
+        val missing = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            add("pleos.car.permission.STT_SERVICE")
+            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+        }.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isNotEmpty() && container.driveSnapshot.value.state == DriveState.PARKED) {
+            permissions.launch(missing.toTypedArray())
+        } else refreshPermissionSummary()
+    }
+
+    private fun refreshPermissionSummary() {
+        permissionSummary = if (container.notifications.availability().block() == null) R.string.voice_permissions_ready
+        else R.string.voice_permissions_needed
     }
 }

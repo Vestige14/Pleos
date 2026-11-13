@@ -6,7 +6,6 @@ import app.memoryvault.data.AppDatabase
 import app.memoryvault.data.MemoryRepository
 import app.memoryvault.data.NoteKind
 import app.memoryvault.data.SeedLoader
-import app.memoryvault.domain.DrivePolicy
 import app.memoryvault.domain.DriveState
 import app.memoryvault.domain.VoiceMemoUseCase
 import app.memoryvault.platform.AaosDriveStateSource
@@ -17,6 +16,8 @@ import app.memoryvault.service.StorageReadiness
 import app.memoryvault.service.VoiceNotifications
 import app.memoryvault.service.VoiceServiceState
 import app.memoryvault.service.VoiceSessionController
+import app.memoryvault.ui.TypedMemoStore
+import app.memoryvault.ui.TypedMemoWriter
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -57,7 +58,7 @@ internal class RepositoryStartup(private val load: suspend () -> MemoryRepositor
     }
 }
 
-enum class TypedMemoResult { SAVED, BLOCKED, EMPTY, STORAGE_UNAVAILABLE, FAILED }
+enum class TypedMemoResult { SAVED, BLOCKED, EMPTY, STORAGE_UNAVAILABLE, NOT_EDITABLE, FAILED }
 
 /** Application-owned dependencies. Holds application Context only, never an Activity. */
 class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCaptureClock) {
@@ -89,6 +90,16 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
     }
     val repository = startup.state
     val storageReadiness = startup.readiness
+    private val typed = TypedMemoWriter({ driveSnapshot.value.state }) {
+        (repository.value as? RepositoryState.Ready)?.repository?.let { ready ->
+            object : TypedMemoStore {
+                override suspend fun add(visitId: String, text: String): Boolean =
+                    ready.addNote(visitId, text, NoteKind.TYPED, captureClock.now())
+                override suspend fun update(noteId: Long, text: String): Boolean =
+                    ready.updateTypedNote(noteId, text)
+            }
+        }
+    }
     private val voice = VoiceMemoUseCase(driveState, { id, text, capturedAt ->
         val ready = repository.value as? RepositoryState.Ready ?: error("Storage unavailable")
         ready.repository.saveVoiceMemo(id, text, capturedAt)
@@ -120,19 +131,12 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
         return true
     }
 
-    suspend fun addTypedNote(visitId: String, text: String): TypedMemoResult {
-        if (!DrivePolicy.canEdit(driveSnapshot.value.state)) return TypedMemoResult.BLOCKED
-        if (text.isBlank()) return TypedMemoResult.EMPTY
-        val ready = repository.value as? RepositoryState.Ready ?: return TypedMemoResult.STORAGE_UNAVAILABLE
-        return try {
-            if (ready.repository.addNote(visitId, text, NoteKind.TYPED, captureClock.now())) TypedMemoResult.SAVED
-            else TypedMemoResult.EMPTY
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            TypedMemoResult.FAILED
-        }
-    }
+    suspend fun addTypedNote(visitId: String, text: String): TypedMemoResult = typed.add(visitId, text)
+
+    suspend fun updateTypedNote(noteId: Long, text: String): TypedMemoResult = typed.update(noteId, text)
+
+    /** Explicit retry after external vehicle-permission setup; never fabricates readiness. */
+    fun retryVehicleConnection() { driveSource.start() }
 
     internal fun newVoiceController() = VoiceSessionController(
         driveState, storageReadiness, voice, notifications::availability, driveSource::start,
