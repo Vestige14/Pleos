@@ -29,6 +29,13 @@ android {
         storeFile = rootProject.file(".local/android/debug.keystore")
     }
 
+    buildTypes.getByName("debug") {
+        // MV-02: remove only the vendor's transcript-logging methods.
+        isMinifyEnabled = true
+        isDebuggable = false
+        proguardFiles("src/debug/vendor-log-protection.pro")
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -48,7 +55,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.10.1")
-    debugImplementation("androidx.compose.ui:ui-tooling")
+    // MV-02 does not use the preview tooling runtime while R8 inspects the APK.
+    // MV-02 throwaway probe only. No SDK credentials or server recognition.
+    debugImplementation("ai.pleos.playground:SpeechToText:3.3.1")
 
     // Pinned for the next approved stages; no storage or integration behavior yet.
     implementation("androidx.room:room-runtime:2.7.2")
