@@ -1,12 +1,20 @@
 package app.memoryvault.platform
 
 import app.memoryvault.domain.DriveState
+import app.memoryvault.domain.VoiceMemoOutcome
+import app.memoryvault.domain.VoiceMemoUseCase
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -25,6 +33,169 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AaosDriveStateSourceTest {
+    @Test fun `transition deadline does not wait for a blocked Binder IO queue`() = runTest {
+        ThreadFixture(StandardTestDispatcher(testScheduler)).use { fixture ->
+            val blocked = BlockingCall()
+            fixture.access.beforeReadUx = blocked::block
+            try {
+                blocked.awaitEntered()
+                fixture.access.emitUx(UxReading(true, 80))
+                assertEquals(DriveState.TRANSITION, fixture.source.snapshot.value.state)
+                advanceTimeBy(500)
+                runCurrent()
+                assertEquals(DriveState.UNKNOWN, fixture.source.snapshot.value.state)
+                assertEquals(DriveReadinessReason.TRANSITION_TIMEOUT, fixture.source.snapshot.value.readinessReason)
+                assertEquals(1L, blocked.release.count)
+                blocked.release.countDown()
+                fixture.awaitIdle()
+            } finally { blocked.release.countDown() }
+        }
+    }
+    @Test fun `accepted voice continues across ordinary P D callback ordering`() = runTest {
+        fixture().use { fixture ->
+            fixture.connect()
+            fixture.access.emitUx(UxReading(true, 80))
+            fixture.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
+            val drive = MutableStateFlow(fixture.snapshot.state)
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                fixture.source.snapshot.collect { drive.value = it.state }
+            }
+            val events = Channel<SpeechEvent>(Channel.UNLIMITED)
+            val input = object : SpeechInput {
+                override fun events() = events.receiveAsFlow()
+                override fun stopCapture() = Unit
+                override fun cancel() = Unit
+                override fun close() = Unit
+            }
+            val useCase = VoiceMemoUseCase(drive, { _, _, _ -> 31L })
+            val run = async { useCase.record("transition", 1L, input) }
+            runCurrent()
+            fixture.access.emit(DriveProperty.GEAR, reading(4, timestamp = 70))
+            runCurrent()
+            assertFalse("Ordinary ordered P/D callbacks cancelled an accepted session", run.isCompleted)
+            fixture.access.emitUx(UxReading(false, 0))
+            runCurrent()
+            assertEquals(DriveState.PARKED, fixture.snapshot.state)
+            fixture.access.emit(DriveProperty.GEAR, reading(8, timestamp = 80))
+            runCurrent()
+            assertFalse(run.isCompleted)
+            fixture.access.emitUx(UxReading(true, 80))
+            events.trySend(SpeechEvent.Final("raw"))
+            assertEquals(VoiceMemoOutcome.Saved(31L), run.await())
+        }
+    }
+
+    @Test fun `eligible transition has a fixed 500ms budget that callbacks cannot extend`() = runTest {
+        fixture().use {
+            it.connect()
+            it.access.emitUx(UxReading(true, 80))
+            assertEquals("TRANSITION", it.snapshot.state.name)
+            advanceTimeBy(499)
+            runCurrent()
+            it.access.emitUx(UxReading(true, 80))
+            assertEquals("TRANSITION", it.snapshot.state.name)
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            it.access.emitUx(UxReading(true, 80))
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            advanceTimeBy(100)
+            it.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
+            assertEquals(DriveState.DRIVING, it.snapshot.state)
+            it.access.emit(DriveProperty.GEAR, reading(4, timestamp = 70))
+            assertEquals("TRANSITION", it.snapshot.state.name)
+        }
+    }
+
+    @Test fun `periodic reads cannot extend a transition and close invalidates its timer`() = runTest {
+        fixture().use {
+            it.connect()
+            advanceTimeBy(750)
+            it.access.ux = UxReading(true, 80)
+            it.access.emitUx(UxReading(true, 80))
+            advanceTimeBy(499)
+            runCurrent()
+            assertEquals(DriveState.TRANSITION, it.snapshot.state)
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals(DriveReadinessReason.TRANSITION_TIMEOUT, it.snapshot.readinessReason)
+            it.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
+            it.access.emit(DriveProperty.GEAR, reading(4, timestamp = 70))
+            assertEquals(DriveState.TRANSITION, it.snapshot.state)
+            it.source.close()
+            advanceTimeBy(600)
+            runCurrent()
+            assertEquals(DriveReadinessReason.CLOSED, it.snapshot.readinessReason)
+        }
+    }
+
+    @Test fun `new connection cannot inherit previous stable transition eligibility`() = runTest {
+        fixture().use {
+            it.connect()
+            it.access.emitUx(UxReading(true, 80))
+            val next = FakeCarAccess().apply { ux = UxReading(true, 80) }
+            it.connector.latest.listener.onReady(next)
+            runCurrent()
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            assertEquals(DriveReadinessReason.INCONSISTENT_SIGNALS, it.snapshot.readinessReason)
+            advanceTimeBy(600)
+            runCurrent()
+            assertEquals(DriveReadinessReason.INCONSISTENT_SIGNALS, it.snapshot.readinessReason)
+        }
+    }
+
+    @Test fun `startup conflict is immediately unknown without a transition window`() = runTest {
+        fixture().use {
+            it.access.ux = UxReading(true, 80)
+            it.connect()
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            it.access.emitUx(UxReading(true, 80))
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            advanceTimeBy(501)
+            runCurrent()
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+        }
+    }
+
+    @Test fun `invalid signal during transition is immediately unknown and cannot reopen grace`() = runTest {
+        fixture().use {
+            it.connect()
+            it.access.emitUx(UxReading(true, 80))
+            assertEquals("TRANSITION", it.snapshot.state.name)
+            it.access.emit(DriveProperty.SPEED, reading(1f, timestamp = 60))
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            it.access.emit(DriveProperty.SPEED, reading(0f, timestamp = 70))
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            it.access.emitUx(UxReading(false, 0))
+            assertEquals(DriveState.PARKED, it.snapshot.state)
+        }
+    }
+
+    @Test fun `resolved and replaced sessions invalidate old transition deadlines`() = runTest {
+        fixture().use {
+            it.connect()
+            it.access.emitUx(UxReading(true, 80))
+            advanceTimeBy(200)
+            it.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
+            assertEquals(DriveState.DRIVING, it.snapshot.state)
+            advanceTimeBy(400)
+            runCurrent()
+            assertEquals(DriveState.DRIVING, it.snapshot.state)
+            it.access.emit(DriveProperty.GEAR, reading(4, timestamp = 70))
+            val staleUx = it.access.savedUxListener!!
+            it.connector.latest.listener.onDisconnected()
+            runCurrent()
+            val next = FakeCarAccess()
+            it.connector.latest.listener.onReady(next)
+            runCurrent()
+            assertEquals(DriveState.PARKED, it.snapshot.state)
+            staleUx(UxReading(true, 80))
+            advanceTimeBy(600)
+            runCurrent()
+            assertEquals(DriveState.PARKED, it.snapshot.state)
+        }
+    }
+
     @Test fun `slow getter cannot delay disconnect UNKNOWN or callback return`() = slowGetter(Signal.DISCONNECT)
     @Test fun `slow getter cannot delay error UNKNOWN or callback return`() = slowGetter(Signal.ERROR)
     @Test fun `slow getter cannot delay close UNKNOWN or return`() = slowGetter(Signal.CLOSE)
@@ -277,7 +448,7 @@ class AaosDriveStateSourceTest {
         fixture().use {
             it.connect()
             it.access.emitUx(UxReading(true, 80))
-            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            assertEquals(DriveState.TRANSITION, it.snapshot.state)
             it.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
             assertEquals(DriveState.DRIVING, it.snapshot.state)
             it.access.emit(DriveProperty.SPEED, reading(10f, timestamp = 60))
@@ -285,7 +456,7 @@ class AaosDriveStateSourceTest {
             it.access.emit(DriveProperty.GEAR, reading(2, timestamp = 70))
             assertEquals(DriveState.DRIVING, it.snapshot.state)
             it.access.emitUx(UxReading(false, 0))
-            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            assertEquals(DriveState.TRANSITION, it.snapshot.state)
         }
     }
 
@@ -547,6 +718,7 @@ class AaosDriveStateSourceTest {
             connector,
             StandardTestDispatcher(testScheduler),
             { 100 + testScheduler.currentTime * 1_000_000 },
+            StandardTestDispatcher(testScheduler),
         ), { testScheduler.runCurrent() })
     }
 
@@ -692,12 +864,12 @@ class AaosDriveStateSourceTest {
         }
     }
 
-    private class ThreadFixture : AutoCloseable {
+    private class ThreadFixture(deadlineDispatcher: CoroutineDispatcher = Dispatchers.Default) : AutoCloseable {
         private val executor = Executors.newSingleThreadExecutor { Thread(it, "mv03d-car-io") }
         private val dispatcher = executor.asCoroutineDispatcher()
         val connector = FakeCarConnector()
         val access = FakeCarAccess()
-        val source = AaosDriveStateSource(connector, dispatcher, { 100 })
+        val source = AaosDriveStateSource(connector, dispatcher, { 100 }, deadlineDispatcher)
         private lateinit var errorCallback: VehicleListener
 
         init {

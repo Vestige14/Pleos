@@ -12,6 +12,11 @@ class DrivePolicyTest {
             Triple(DriveState.UNKNOWN, Route.DayDraft, Route.Locked),
             Triple(DriveState.UNKNOWN, Route.ShareSelect, Route.Locked),
             Triple(DriveState.UNKNOWN, Route.SharePreview, Route.Locked),
+            Triple(DriveState.TRANSITION, Route.Locked, Route.Locked),
+            Triple(DriveState.TRANSITION, Route.Driving, Route.Locked),
+            Triple(DriveState.TRANSITION, Route.DayDraft, Route.Locked),
+            Triple(DriveState.TRANSITION, Route.ShareSelect, Route.Locked),
+            Triple(DriveState.TRANSITION, Route.SharePreview, Route.Locked),
             Triple(DriveState.DRIVING, Route.Locked, Route.Driving),
             Triple(DriveState.DRIVING, Route.Driving, Route.Driving),
             Triple(DriveState.DRIVING, Route.DayDraft, Route.Driving),
@@ -30,7 +35,7 @@ class DrivePolicyTest {
 
     // Catches editing/export being enabled before a trustworthy parked classification.
     @Test fun editingAndExport_areAllowedOnlyWhenParked() {
-        listOf(DriveState.UNKNOWN to false, DriveState.DRIVING to false, DriveState.PARKED to true)
+        listOf(DriveState.UNKNOWN to false, DriveState.TRANSITION to false, DriveState.DRIVING to false, DriveState.PARKED to true)
             .forEach { (state, expected) ->
                 assertEquals("edit $state", expected, DrivePolicy.canEdit(state))
                 assertEquals("export $state", expected, DrivePolicy.canExport(state))
@@ -39,7 +44,7 @@ class DrivePolicyTest {
 
     // Catches inventing a parked voice-start path or accepting UNKNOWN.
     @Test fun voiceStart_isAllowedOnlyWhileDriving() {
-        listOf(DriveState.UNKNOWN to false, DriveState.DRIVING to true, DriveState.PARKED to false)
+        listOf(DriveState.UNKNOWN to false, DriveState.TRANSITION to false, DriveState.DRIVING to true, DriveState.PARKED to false)
             .forEach { (state, expected) ->
                 assertEquals(state.toString(), expected, DrivePolicy.canStartVoice(state))
             }

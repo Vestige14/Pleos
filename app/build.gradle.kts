@@ -30,6 +30,20 @@ android {
         storeFile = rootProject.file(".local/android/debug.keystore")
     }
 
+    buildTypes {
+        getByName("debug") {
+            // SDK privacy optimization must run; debuggable R8 preserves vendor logger calls.
+            isMinifyEnabled = true
+            isDebuggable = false
+            proguardFiles("vendor-log-protection.pro")
+        }
+        getByName("release") {
+            isMinifyEnabled = true
+            isDebuggable = false
+            proguardFiles("vendor-log-protection.pro")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -48,6 +62,7 @@ ksp {
 }
 
 dependencies {
+    implementation("ai.pleos.playground:SpeechToText:3.3.1")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

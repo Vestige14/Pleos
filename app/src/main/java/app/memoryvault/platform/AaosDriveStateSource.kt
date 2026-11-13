@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import app.memoryvault.domain.DriveState
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -52,6 +53,7 @@ class AaosDriveStateSource internal constructor(
     private val connector: CarConnector,
     dispatcher: CoroutineDispatcher,
     private val elapsedRealtimeNanos: () -> Long,
+    deadlineDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : DriveStateSource {
     constructor(context: Context) : this(
         AndroidCarConnector(context.applicationContext),
@@ -61,6 +63,8 @@ class AaosDriveStateSource internal constructor(
 
     private val lock = Any()
     private val ioScope = CoroutineScope(SupervisorJob() + dispatcher)
+    // Deadline execution cannot queue behind a blocking Car/Binder operation.
+    private val deadlineScope = CoroutineScope(SupervisorJob() + deadlineDispatcher)
     private val commands = Channel<() -> Unit>(Channel.UNLIMITED)
     private val mutableSnapshot = MutableStateFlow(DriveSnapshot())
     override val snapshot: StateFlow<DriveSnapshot> = mutableSnapshot.asStateFlow()
@@ -112,6 +116,7 @@ class AaosDriveStateSource internal constructor(
         // The actor must drain late-acquired resources before its scope is cancelled.
         enqueueIo { commands.close() }
         unknownLocked(DriveReadinessReason.CLOSED)
+        deadlineScope.cancel()
     }
 
     private fun enqueueIo(command: () -> Unit) {
@@ -319,13 +324,57 @@ class AaosDriveStateSource internal constructor(
 
     private fun publishLocked(current: Session) {
         if (!isCurrentLocked(current)) return
+        val now = elapsedRealtimeNanos()
         val evaluated = DriveReadiness.evaluate(
             true, current.ux, current.readings[DriveProperty.GEAR], current.readings[DriveProperty.SPEED],
-            elapsedRealtimeNanos(),
+            now,
         )
-        mutableSnapshot.value = if (!current.initialized && evaluated.state != DriveState.UNKNOWN) {
-            evaluated.copy(state = DriveState.UNKNOWN, readinessReason = DriveReadinessReason.CONNECTING)
-        } else evaluated
+        if (!current.initialized) {
+            mutableSnapshot.value = if (evaluated.state != DriveState.UNKNOWN) {
+                evaluated.copy(state = DriveState.UNKNOWN, readinessReason = DriveReadinessReason.CONNECTING)
+            } else evaluated
+            return
+        }
+        if (evaluated.state == DriveState.PARKED || evaluated.state == DriveState.DRIVING) {
+            clearTransitionLocked(current)
+            current.transitionArmed = true
+            current.transitionExpired = false
+            mutableSnapshot.value = evaluated
+            return
+        }
+        val candidate = DriveReadiness.isTransitionCandidate(
+            current.ux, current.readings[DriveProperty.GEAR], current.readings[DriveProperty.SPEED], now,
+        )
+        if (candidate && (current.transitionArmed || current.transitionToken != null)) {
+            if (current.transitionToken == null) {
+                current.transitionArmed = false
+                val token = Any()
+                current.transitionToken = token
+                current.transitionJob = deadlineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    delay(500L)
+                    synchronized(lock) {
+                        if (isCurrentLocked(current) && current.transitionToken === token) {
+                            current.transitionExpired = true
+                            clearTransitionLocked(current)
+                            unknownLocked(DriveReadinessReason.TRANSITION_TIMEOUT, current.ux)
+                        }
+                    }
+                }
+            }
+            mutableSnapshot.value = evaluated.copy(state = DriveState.TRANSITION, readinessReason = DriveReadinessReason.TRANSITION)
+        } else {
+            clearTransitionLocked(current)
+            current.transitionArmed = false
+            mutableSnapshot.value = if (candidate && current.transitionExpired) {
+                evaluated.copy(readinessReason = DriveReadinessReason.TRANSITION_TIMEOUT)
+            } else evaluated
+        }
+    }
+
+    private fun clearTransitionLocked(current: Session) {
+        current.transitionToken = null
+        current.transitionJob?.cancel()
+        current.transitionJob = null
     }
 
     private fun failLocked(reason: DriveReadinessReason) {
@@ -348,6 +397,7 @@ class AaosDriveStateSource internal constructor(
         refreshJob?.cancel()
         refreshJob = null
         val previous = session
+        previous?.let(::clearTransitionLocked)
         session = null
         return previous
     }
@@ -409,6 +459,10 @@ class AaosDriveStateSource internal constructor(
         val revisions = mutableMapOf<DriveProperty, Long>()
         fun revision(property: DriveProperty) = revisions[property] ?: 0L
         var cleanupScheduled = false
+        var transitionArmed = false
+        var transitionExpired = false
+        var transitionToken: Any? = null
+        var transitionJob: Job? = null
         // Only the I/O actor reads/writes registration resources.
         var uxRegistrationAttempted = false
         val listeners = linkedMapOf<DriveProperty, VehicleListener>()

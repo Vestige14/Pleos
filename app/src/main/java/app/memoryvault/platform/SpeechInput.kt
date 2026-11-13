@@ -3,6 +3,8 @@ package app.memoryvault.platform
 import kotlinx.coroutines.flow.Flow
 
 sealed interface SpeechEvent {
+    /** The SDK confirms that microphone recognition has actually started. */
+    data object Started : SpeechEvent
     data class Partial(val text: String) : SpeechEvent
     data class Final(val text: String) : SpeechEvent
     /** Capture ended, but a final recognition callback may still follow. */

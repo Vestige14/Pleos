@@ -8,6 +8,17 @@ internal enum class VehicleStatus { AVAILABLE, UNAVAILABLE, ERROR }
 internal data class VehicleReading(val value: Any?, val status: VehicleStatus, val timestampNanos: Long)
 
 internal object DriveReadiness {
+    /** Only valid P/0/restricted or D/R/unrestricted(mask0) ordering candidates qualify. */
+    fun isTransitionCandidate(ux: UxReading?, gear: VehicleReading?, speed: VehicleReading?, nowNanos: Long): Boolean {
+        val validated = evaluate(true, ux, gear, speed, nowNanos)
+        if (validated.readinessReason != DriveReadinessReason.INCONSISTENT_SIGNALS || ux == null) return false
+        return when (gear?.value) {
+            VehicleGear.GEAR_PARK -> speed?.value == 0f && ux.requiresDistractionOptimization
+            VehicleGear.GEAR_DRIVE, VehicleGear.GEAR_REVERSE -> !ux.requiresDistractionOptimization && ux.activeRestrictions == 0
+            else -> false
+        }
+    }
+
     fun evaluate(
         carReady: Boolean,
         ux: UxReading?,

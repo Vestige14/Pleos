@@ -30,9 +30,54 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class VoiceMemoUseCaseTest {
+    @Test fun acceptedInput_isPreparingUntilTheSdkActuallyStarts() = runTest {
+        val store = Store()
+        val useCase = VoiceMemoUseCase(MutableStateFlow(DriveState.DRIVING), store::save)
+        val input = Input(autoStarted = false)
+        val active = async { useCase.record("initializing", 7L, input) }
+        runCurrent()
+        assertEquals(VoiceState.Preparing, useCase.state.value)
+        input.emit(SpeechEvent.Started)
+        runCurrent()
+        assertEquals(VoiceState.Listening, useCase.state.value)
+        useCase.cancel()
+        assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER), active.await())
+        assertTrue(store.calls.isEmpty())
+    }
+
+    @Test fun startedAfterRecognitionEnded_cannotRevertProcessing() = runTest {
+        val useCase = VoiceMemoUseCase(MutableStateFlow(DriveState.DRIVING), Store()::save)
+        val input = Input(autoStarted = false)
+        val active = async { useCase.record("ended", 7L, input) }
+        runCurrent()
+        input.emit(SpeechEvent.RecognitionEnded)
+        input.emit(SpeechEvent.Started)
+        runCurrent()
+        assertEquals(VoiceState.Processing, useCase.state.value)
+        input.emit(SpeechEvent.Final("raw"))
+        assertEquals(VoiceMemoOutcome.Saved(41L), active.await())
+    }
+
+    @Test fun initializationConsumesCaptureDeadline_andLateStartedCannotRevertProcessing() = runTest {
+        val useCase = VoiceMemoUseCase(MutableStateFlow(DriveState.DRIVING), Store()::save)
+        val input = Input(autoStarted = false)
+        val active = async { useCase.record("late-init", 7L, input) }
+        runCurrent()
+        assertEquals(VoiceState.Preparing, useCase.state.value)
+        advanceTimeBy(15_000)
+        runCurrent()
+        assertEquals(1, input.stopCalls)
+        input.emit(SpeechEvent.Started)
+        runCurrent()
+        assertEquals(VoiceState.Processing, useCase.state.value)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(VoiceMemoOutcome.TimedOut(), active.await())
+    }
+
     // Each test names a broken coordinator branch/side effect; only speech and persistence are fake.
     @Test fun unknownAndParkedStart_areBlockedWithoutAcquiringOrClosingInput() = runTest {
-        listOf(DriveState.UNKNOWN, DriveState.PARKED).forEach { state ->
+        listOf(DriveState.UNKNOWN, DriveState.TRANSITION, DriveState.PARKED).forEach { state ->
             val store = Store()
             val useCase = VoiceMemoUseCase(MutableStateFlow(state), store::save)
             val input = Input()
@@ -315,7 +360,7 @@ class VoiceMemoUseCaseTest {
         val active = async { useCase.record("s", 7L, input) }
         runCurrent()
         assertEquals(VoiceState.Listening, useCase.state.value)
-        listOf(DriveState.PARKED, DriveState.DRIVING, DriveState.PARKED).forEach {
+        listOf(DriveState.TRANSITION, DriveState.PARKED, DriveState.TRANSITION, DriveState.DRIVING, DriveState.PARKED).forEach {
             drive.value = it
             runCurrent()
             assertFalse(active.isCompleted)
@@ -695,6 +740,7 @@ class VoiceMemoUseCaseTest {
         private val stopFailure: Exception? = null,
         private val cancelFailure: Exception? = null,
         private val closeFailure: Exception? = null,
+        private val autoStarted: Boolean = true,
     ) : SpeechInput {
         private val callbacks = Channel<SpeechEvent>(Channel.UNLIMITED)
         var eventsCalls = 0
@@ -706,7 +752,10 @@ class VoiceMemoUseCaseTest {
             eventsCalls++
             return flow {
                 listeners++
-                try { emitAll(source ?: callbacks.receiveAsFlow()) } finally { listeners-- }
+                try {
+                    if (autoStarted) emit(SpeechEvent.Started)
+                    emitAll(source ?: callbacks.receiveAsFlow())
+                } finally { listeners-- }
             }
         }
         fun emit(event: SpeechEvent) { callbacks.trySend(event).getOrThrow() }

@@ -42,6 +42,7 @@ sealed interface VoiceMemoOutcome {
 
 sealed interface VoiceState {
     data object Idle : VoiceState
+    data object Preparing : VoiceState
     data object Listening : VoiceState
     data object Processing : VoiceState
     data class Result(val outcome: VoiceMemoOutcome) : VoiceState
@@ -84,7 +85,7 @@ class VoiceMemoUseCase(
             return VoiceMemoOutcome.Blocked
         }
 
-        mutableState.value = VoiceState.Listening
+        mutableState.value = VoiceState.Preparing
         try {
             var outcome: VoiceMemoOutcome? = null
             var failure: Throwable? = null
@@ -188,6 +189,10 @@ class VoiceMemoUseCase(
                 }
                 try {
                     val event = input.events().onEach {
+                        if (it == SpeechEvent.Started && !captureEnded.get()) {
+                            // Atomic transition cannot overwrite a racing capture deadline/end.
+                            mutableState.compareAndSet(VoiceState.Preparing, VoiceState.Listening)
+                        }
                         if (it == SpeechEvent.RecognitionEnded) {
                             captureEnded.set(true)
                             mutableState.value = VoiceState.Processing

@@ -5,6 +5,37 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DriveReadinessTest {
+    @Test fun `transition eligibility excludes every invalid or unsupported combination`() {
+        val allowed = listOf(
+            Triple(UxReading(true, 80), reading(4), reading(0f)),
+            Triple(UxReading(true, 0), reading(4), reading(0f)),
+            Triple(UxReading(false, 0), reading(8), reading(0f)),
+            Triple(UxReading(false, 0), reading(8), reading(2f)),
+            Triple(UxReading(false, 0), reading(2), reading(-2f)),
+        )
+        allowed.forEach { (ux, gear, speed) ->
+            assertEquals(true, DriveReadiness.isTransitionCandidate(ux, gear, speed, 100))
+        }
+        val denied = listOf(
+            Triple(UxReading(true, 80), reading(4), reading(1f)),
+            Triple(UxReading(true, 80), reading(4), reading(-1f)),
+            Triple(UxReading(false, 80), reading(8), reading(0f)),
+            Triple(UxReading(false, -1), reading(8), reading(0f)),
+            Triple(UxReading(false, 0), reading(1), reading(0f)),
+            Triple(UxReading(false, 0), reading(8L), reading(0f)),
+            Triple(UxReading(false, 0), reading(8), reading(Float.NaN)),
+            Triple(UxReading(false, 0), reading(8), reading(0f, timestamp = 0)),
+            Triple(UxReading(false, 0), reading(8, timestamp = 101), reading(0f)),
+            Triple(UxReading(false, 0), reading(8, VehicleStatus.ERROR), reading(0f)),
+            Triple(UxReading(false, 0), reading(8), reading(0f, VehicleStatus.UNAVAILABLE)),
+        )
+        denied.forEach { (ux, gear, speed) ->
+            assertEquals(false, DriveReadiness.isTransitionCandidate(ux, gear, speed, 100))
+        }
+        assertEquals(false, DriveReadiness.isTransitionCandidate(null, reading(8), reading(0f), 100))
+        assertEquals(false, DriveReadiness.isTransitionCandidate(UxReading(false, 0), null, reading(0f), 100))
+        assertEquals(false, DriveReadiness.isTransitionCandidate(UxReading(false, 0), reading(8), null, 100))
+    }
     private val parkedUx = UxReading(false, 0)
     private val drivingUx = UxReading(true, 80)
     private val park = reading(4)
