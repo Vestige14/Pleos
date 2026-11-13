@@ -24,4 +24,3 @@ keystore.properties
 
 # Keep Android sources visible when a global ignore rule matches "main".
 !app/src/main/
-!app/src/main/**
