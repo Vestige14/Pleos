@@ -42,6 +42,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.memoryvault.DemoConfig
 import app.memoryvault.R
@@ -96,6 +97,7 @@ fun MemoryVaultScreen(
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
 
     LaunchedEffect(snapshot.state) {
         if (snapshot.state != DriveState.PARKED) {
@@ -104,8 +106,18 @@ fun MemoryVaultScreen(
             keyboard?.hide()
         }
     }
-    DisposableEffect(Unit) {
-        onDispose { focus.clearFocus(force = true); keyboard?.hide() }
+    DisposableEffect(lifecycle, focus, keyboard) {
+        val observer = MemoEditorLifecycleObserver(
+            currentEditor = { editor },
+            updateEditor = { editor = it },
+            closeInput = { focus.clearFocus(force = true); keyboard?.hide() },
+        )
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            focus.clearFocus(force = true)
+            keyboard?.hide()
+        }
     }
 
     Scaffold { insets ->

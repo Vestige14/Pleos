@@ -1,5 +1,6 @@
 package app.memoryvault.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -10,6 +11,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.memoryvault.TypedMemoResult
 import app.memoryvault.data.DayDraft
 import app.memoryvault.data.Note
@@ -84,6 +89,36 @@ class MemoryVaultScreenTest {
         compose.runOnIdle { assertTrue(ui.saved.isEmpty()) }
     }
 
+    @Test fun stoppedParkedEditorDoesNotAutomaticallyReopenAfterDrivingAndParkingInBackground() {
+        val ui = FixtureUi(DriveState.PARKED)
+        val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
+        compose.setContent {
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                MemoryVaultTheme { MemoryVaultScreen(ui, onRequestPermissions = {}) }
+            }
+        }
+        compose.onNodeWithText("메모 추가").performScrollTo().performClick()
+        compose.onNodeWithTag("memo-input").performTextInput("백그라운드 전 미전송 메모")
+        compose.runOnIdle {
+            ui.voiceState.value = VoiceServiceState.Listening
+            owner.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        }
+        compose.onNodeWithTag("memo-input").assertDoesNotExist()
+        compose.runOnIdle {
+            ui.driveSnapshot.value = DriveSnapshot(state = DriveState.DRIVING)
+            ui.driveSnapshot.value = DriveSnapshot(state = DriveState.PARKED)
+            owner.registry.currentState = Lifecycle.State.RESUMED
+        }
+        compose.onNodeWithTag("memo-input").assertDoesNotExist()
+        compose.onNodeWithText("녹음 취소").performScrollTo().assertIsDisplayed()
+        compose.runOnIdle {
+            assertTrue(ui.saved.isEmpty())
+            assertEquals(0, ui.cancellations)
+        }
+        compose.onNodeWithText("작성 중인 메모 이어 쓰기").performScrollTo().performClick()
+        compose.onNodeWithTag("memo-input").assertTextContains("백그라운드 전 미전송 메모")
+    }
+
     @Test fun pendingVoiceDisplaysExactReadOnlyText_andTypedSaveRequiresAnExplicitConfirmation() {
         val ui = FixtureUi(DriveState.PARKED)
         compose.setContent { MemoryVaultTheme { MemoryVaultScreen(ui, onRequestPermissions = {}) } }
@@ -97,6 +132,11 @@ class MemoryVaultScreenTest {
         compose.waitForIdle()
         compose.runOnIdle { assertEquals(listOf("v1:  직접 쓴 메모  "), ui.saved) }
         compose.onNodeWithTag("memo-input").assertDoesNotExist()
+    }
+
+    private class Owner : LifecycleOwner {
+        val registry = LifecycleRegistry.createUnsafe(this)
+        override val lifecycle: Lifecycle get() = registry
     }
 
     private class FixtureUi(initialDrive: DriveState = DriveState.UNKNOWN) : MemoryVaultUi {
