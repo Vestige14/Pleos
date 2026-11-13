@@ -6,7 +6,7 @@
 
 ## 빌드
 
-프로젝트 루트에서 실행합니다. JDK 17과 Android SDK를 설치하고 아래 macOS 환경 탐색 예시를 사용합니다.
+새 clone의 프로젝트 루트에서 실행합니다. JDK 17과 Android SDK를 먼저 설치합니다. 아래는 macOS 예시이며, 다른 운영체제에서는 JAVA_HOME과 ANDROID_HOME을 자신의 설치 경로로 설정합니다.
 
 ```sh
 export JAVA_HOME="$(/usr/libexec/java_home -v 17)"
@@ -22,7 +22,7 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`. 최초 실행에는 공개 의
 
 ## 새 AVD에서 확인
 
-이 Mac에 별도로 만든 AVD만 사용합니다. 기존 `Pleos_Connect_2_1_API34`는 사용하거나 변경하지 않습니다. AVD 생성 과정과 다른 환경에서의 준비 방법은 [환경 기록](docs/environment/pleos-memory-vault-v4.md)에 있습니다.
+프로젝트 전용 AVD를 별도로 만듭니다. 기존 AVD의 사용자 데이터를 복제하지 않습니다. AVD 생성 과정은 [환경 기록](docs/environment/pleos-memory-vault-v4.md)에 있습니다. 아래 이름·포트가 이미 다른 기기에 사용 중이면 사용하지 않는 이름·포트를 정하고 모든 명령에서 일치시킵니다.
 
 ```sh
 export ANDROID_EMULATOR_HOME="$PWD/.local/android"
@@ -43,3 +43,9 @@ export ADB_SERVER_SOCKET=tcp:localhost:5038
 확인할 화면: `기억 저장소`, `1단계 · 초기 환경 확인`, 음성·차량 상태 `미연동`, 기준일 `2026-11-08 · Asia/Seoul`. 마이크 설정은 켰으나 실제 발화·macOS 마이크 허용·STT는 2단계 확인 대상입니다.
 
 [실제 실행 화면](.local/evidence/mv-01-bootstrap.png)과 빌드 로그는 Git에서 제외한 `.local/evidence/`에 있습니다. 공식 이미지 메타데이터 차이, `android.car` 런타임 선언 수정, 해시와 제한은 [환경 기록](docs/environment/pleos-memory-vault-v4.md)에 정리했습니다.
+
+## Git에 포함하지 않는 파일
+
+`local.properties`는 위 명령으로 각 환경에서 생성합니다. root `.local/`의 캐시·AVD·debug 서명키·검증 로그와 빌드 출력도 새로 생성하며 복사하지 않습니다. 개인 IDE 상태와 로컬 Kotlin/native 캐시는 제외합니다. 공용 `gradle.properties`, Gradle wrapper, 앱 소스·리소스는 공유합니다. `.env.example` 같은 템플릿에는 예시 값만 넣습니다. 실제 API 키·인증정보는 저장소와 APK에 넣지 않습니다.
+
+이 초기 앱은 키 없이 빌드·실행됩니다. 음성·차량 연동과 저장·공유·AI 기능은 후속 개발 범위이며, 아직 전체 설계의 동작을 보증하는 단계는 아닙니다. `.local/evidence/`의 화면·로그 링크는 이 작업 환경의 검증 자료로, 새 clone에는 포함되지 않습니다.

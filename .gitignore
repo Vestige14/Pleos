@@ -22,5 +22,24 @@ keystore.properties
 # Local system metadata
 .DS_Store
 
+# Personal IDE state; portable team styles and run configurations may be shared.
+**/.idea/workspace.xml
+**/.idea/tasks.xml
+**/.idea/shelf/
+**/.idea/dictionaries/
+**/.idea/caches/
+**/.idea/usage.statistics.xml
+**/.idea/navEditor.xml
+**/.idea/assetWizardSettings.xml
+**/.idea/deploymentTargetSelector.xml
+*.iml
+**/.vscode/settings.json
+
+# Regenerable Kotlin and native build caches
+.kotlin/
+.konan/
+.cxx/
+.externalNativeBuild/
+
 # Keep Android sources visible when a global ignore rule matches "main".
 !app/src/main/
