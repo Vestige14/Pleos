@@ -1,6 +1,6 @@
 # 다음 개발자·에이전트를 위한 인수인계
 
-갱신일: 2026-11-14 (Asia/Seoul). 이 문서는 **매 push 전에 갱신하는 작업 인수인계**다. 아래 상태는 특정 시점의 기록이며, 작업 시작 시 실제 브랜치·커밋·파일과 대조한다.
+갱신일: 2026-11-14 (Asia/Seoul). **게시 보류: 사용자 지시에 따라 3단계 완료 후 최종 소스·검증 상태로 갱신해 함께 업로드한다. 현재 문서 초안만으로 완료를 선언하거나 즉시 push하지 않는다.** 이 문서는 **매 push 전에 갱신하는 작업 인수인계**다. 아래 상태는 특정 시점의 기록이며, 작업 시작 시 실제 브랜치·커밋·파일과 대조한다.
 
 ## 1. 작업 시작 시 반드시 읽을 자료
 
@@ -8,7 +8,7 @@
 
 권장 순서는 다음과 같다.
 
-1. 이 문서와 [개발 상태](development-status.md): 최신 사용자 결정, 완료·미완료 구분.
+1. 이 문서와 [개발 상태](development-status.md): 최신 사용자 결정, 완료·미완료 구분. 환경 설정은 [SETUP.md](SETUP.md)를 따른다.
 2. [원본 PRD](%E1%84%80%E1%85%B5%E1%84%8B%E1%85%A5%E1%86%A8%20%E1%84%8C%E1%85%A5%E1%84%8C%E1%85%A1%E1%86%BC%E1%84%89%E1%85%A9%20%E1%84%83%E1%85%A6%E1%84%86%E1%85%A9%20PRD.pdf): 전체 7쪽. 제품 목적, F1~F15, 공유 보호, 시연 기준. 실제 파일명은 파일 목록에서 확인한다.
 3. [v1 구현안](2026-11-13-memory-vault-demo.md), [v2 구현안](2026-11-13-memory-vault-demo-v2.md): 원래 화면·데이터·기능 계약.
 4. [v3 OpenAI 추가안](2026-11-13-memory-vault-demo-v3-openai-offline-addon.md): 원문 우선 저장, 방문 미지정, AI 제안과 사용자 결정 보존.
@@ -20,7 +20,7 @@
 
 ## 2. 현재 소스와 이번 인수인계 범위
 
-**문서 게시와 3단계 제품 소스 게시를 구분한다.** 이번 게시에서는 문서만 추가·갱신하며, 진행 중인 feature 구현을 main에 병합하거나 원격으로 전송하지 않는다.
+**문서 작업과 3단계 제품 구현을 구분한다.** 이 문서 작업은 제품 소스를 변경하지 않았다. 단독 문서 게시 계획은 보류됐으며, 3단계 완료 후 최종 구현과 함께 통합한다. 아래 표는 초안 작성 당시의 기준이다. 게시 전에는 실제 최종 커밋·완료 범위·검증 결과·다음 작업으로 반드시 갱신한다.
 
 | 기준 | 확인한 상태 |
 | --- | --- |
@@ -87,49 +87,23 @@ P1(F11 전체 배지 확장·F12 사진 이동·F13 문장 다듬기), P2(F14 �
 
 과거 문서의 3/5/7/8단계별 v0.1/v0.2/v0.3/v0.4 배정, develop 중심 통합, STT 실패 시 자동 텍스트 대체, 단계별 중단 없이 계속 실행한다는 지시는 최신 사용자 정정으로 대체됐다.
 
+### 브랜치 운영
+
+`main`에는 검증된 최신 구현·문서를 유지한다. 기능은 `feature/<기능명>`, 별도 버그 수정은 `bugfix/<문제명>`에서 진행해 검토 후 main에 반영한다. 실행 가능한 데모의 완료 기준을 충족하면 `release/<버전>`과 동일 버전 태그를 만들고 APK·변경 내역을 GitHub Release에 연결한다. 첫 릴리즈 이름은 `release/v0.1.0` 및 `v0.1.0`이며, 과거 `release-v0.1.0` 명명은 대체됐다. 현재는 릴리즈 기준 미충족이므로 릴리즈를 만들지 않는다. 문서 작업 브랜치는 `feature/developer-handoff`다. develop은 필수 통합 경로가 아니며 기존 브랜치를 임의 삭제하지 않는다.
+
 ## 6. 실행·검증 방법
 
-JDK 17, Android SDK 35 / Build Tools 35.0.0, Gradle wrapper 8.13, AGP 8.13.2, Kotlin 2.2.21을 기준으로 한다. 패키지는 `app.memoryvault`, minSdk 29, targetSdk 34다. 실제 소스의 Gradle 설정과 함께 확인한다. Pleos 전용 기능은 일반 휴대폰에서 동작한다고 가정하지 않는다.
+실제 명령과 준비 절차는 [환경 설정·실행 안내](SETUP.md)에 모았다. 루트 README는 프로젝트 소개와 시작 안내만 제공한다.
 
-새 clone의 루트에서 macOS 예시:
+1. clone의 브랜치·커밋과 현재 구현을 확인한다.
+2. JDK 17·SDK 35·Build Tools 35.0.0과 실제 Gradle 설정을 확인한다.
+3. 기존 로컬 설정을 보존하며 프로젝트 캐시·SDK 경로를 준비하고 APK를 빌드한다.
+4. 호스트에 맞는 Pleos 전용 AVD를 준비하고 실제 serial/user를 확인해 설치·실행한다.
+5. 현재 소스에서 확인한 화면·기능과 미검증 범위를 보고한다.
 
-```sh
-git status --short
-git branch -a
-git log -5 --oneline
-export JAVA_HOME="$(/usr/libexec/java_home -v 17)"
-export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
-export ANDROID_USER_HOME="$PWD/.local/android"
-export GRADLE_USER_HOME="$PWD/.local/gradle-home"
-mkdir -p "$ANDROID_USER_HOME" "$GRADLE_USER_HOME"
-# 기존 local.properties가 있으면 내용을 먼저 확인하고 보존한다.
-test -f local.properties || printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
-./gradlew --no-daemon --console=plain assembleDebug
-```
+환경 준비만으로 제품 완료를 선언하지 않는다. 중간 변경에는 관련 검사, 3단계 완료에는 전체 JVM·Lint·APK 빌드와 실제 기기 통합·재시작 확인을 수행한다. 코어 기기 시험은 [개발 상태](development-status.md)의 재현 절차를 따른다. SDK를 포함하는 소스에서는 실제 발화 전에 `scripts/verify_vendor_log_dex.py`로 APK의 vendor 로그 제거와 결과 콜백 보존을 확인한다. 이 스크립트가 없는 초기 main에서 존재한다고 가정하지 않는다.
 
-공개 의존성 다운로드가 필요할 수 있다. 다른 개발자의 `.local`, 키, 캐시, AVD 데이터를 복사하지 않는다. APK는 `app/build/outputs/apk/debug/app-debug.apk`다. **main 기준선으로 빌드하면 초기 안내 앱이며, 로컬 feature 구현이 자동으로 포함되지 않는다.**
-
-Pleos API34 전용 새 AVD, cold boot, RAM 4GB를 준비한다. [README](../README.md)와 [환경 기록](environment/pleos-memory-vault-v4.md)에 따라 사용하지 않는 ADB·emulator 포트와 실제 serial/user를 확인한다. 기존 앱 데이터 삭제나 다른 AVD 덮어쓰기로 설치 문제를 해결하지 않는다. 마이크는 사용자 발화 시험 때만 켜고 이후 복원한다. 아래는 이미 준비된 새 기기에 설치하는 예시다.
-
-```sh
-: "${MV_SERIAL:?대상 새 AVD serial을 지정하세요}"
-MV_USER_ID="$("$ANDROID_HOME/platform-tools/adb" -s "$MV_SERIAL" shell am get-current-user | tr -d '\r')"
-"$ANDROID_HOME/platform-tools/adb" -s "$MV_SERIAL" shell pm path --user "$MV_USER_ID" app.memoryvault
-# 기존 패키지가 없는 전용 기기임을 확인한 후 실행한다.
-"$ANDROID_HOME/platform-tools/adb" -s "$MV_SERIAL" install --user "$MV_USER_ID" app/build/outputs/apk/debug/app-debug.apk
-"$ANDROID_HOME/platform-tools/adb" -s "$MV_SERIAL" shell am start -W --user "$MV_USER_ID" -n app.memoryvault/.MainActivity
-```
-
-중간 수정에서는 변경 부분·직접 영향 범위·필수 안전 회귀만 검사한다. 전체 검증을 작업마다 반복하지 않는다. 3단계 마무리에는 다음 전체 명령과 실제 기기 통합·재시작 확인이 필요하다.
-
-```sh
-./gradlew --no-daemon --console=plain testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
-# 아래 스크립트는 3E 소스가 인계된 브랜치에서만 존재한다.
-python3 scripts/verify_vendor_log_dex.py app/build/outputs/apk/debug/app-debug.apk \
-  --dexdump "$ANDROID_HOME/build-tools/35.0.0/dexdump"
-```
-
-Room 기기 테스트 절차는 [개발 상태](development-status.md)의 코어 검증 재현을 따른다. 테스트 개수와 과거 APK 해시는 특정 소스의 증거이므로 새 변경의 통과 근거로 재사용하지 않는다. 이 문서 작성 과정에서는 앱 테스트를 실행하지 않았다.
+이 문서 정리에서는 앱 빌드·실행 시험을 수행하지 않았다. 과거 테스트 수나 APK 해시는 현재 소스의 완료 증거가 아니다.
 
 ## 7. 코드 탐색 지도
 
@@ -161,9 +135,19 @@ push마다 낡은 ‘현재 상태’를 수정한다. 역사 기록을 계속 �
 
 push는 사용자 승인 범위 안에서만 수행하며, push 승인으로 다음 개발 단계가 자동 승인되지 않는다. 각 단계 완료 시 실행 결과와 남은 작업을 보고하고 중단한다. 진행 중인 다른 개발자의 소스·Git 작업·기기 자원과 충돌하지 않도록 조율한다.
 
+### push 전 로컬 통합과 검증
+
+- 작업 변경과 동시 Git 작업을 보존·조율한 뒤, 로컬 main에서 `git pull --ff-only origin main`으로 최신 기준을 받는다. 분기된 이력을 reset/force로 덮어쓰지 않는다.
+- 검토 완료 feature/bugfix를 로컬 main에 merge하고 충돌을 해결한다. 미완료 feature만 게시할 경우에는 최신 main을 feature에 반영·검증하며 미완료 기능을 main에 합치지 않는다.
+- **origin에 올릴 최종 병합 결과를 로컬에서 먼저 검증한다.** 코드에는 영향 범위의 빌드·테스트·실행 확인, 문서에는 내용·링크·필수 자료·일관성·diff 검사를 적용한다. 단계/릴리즈 완료의 전체 필수 검증은 유지한다.
+- 본인이 개발한 내용, 실제 검증한 소스·결과와 한계, 다음에 개발할 기능을 이 문서에 갱신해 최종 커밋에 포함한다. 이후 변경이 생기면 관련 검증을 갱신한다.
+- 원격·대상 브랜치·커밋 범위를 특정해 비밀정보를 점검하고 사용자 승인 범위에서만 push한다. 원격 main이 바뀌면 다시 받아 로컬 통합·관련 검사부터 갱신한다. 충돌·실패·미확인 비밀정보가 있으면 중단하며 force push로 우회하지 않는다.
+
+순서는 **main pull → 로컬 merge → 로컬 검증 → 인수인계 갱신·최종 변경 확인 → 비밀정보 점검 → origin push**다. GitHub에서 먼저 합치고 나중에 검증하지 않는다.
+
 ### 이번 문서 작업의 인계
 
-- 개발·변경: 에이전트 필수 읽기 진입점, 원본 MD/PDF 공개 묶음, 이 인수인계와 매 push 갱신 규칙.
+- 개발·변경: 간단한 README, AGENTS의 필수 자료 읽기·환경 준비 절차, SETUP 실행 안내, 원본 MD/PDF·운영 자료, 매 push 인수인계 갱신과 로컬 병합·검증 규칙.
 - 제품 소스 변경: 없음. 미완료 3단계 소스를 main에 합치지 않음.
 - 문서 검증: 게시 전 링크·파일 포함 여부·변경 범위·비밀정보 점검을 수행하고 결과를 게시 보고에 남긴다. 앱 검증과 구분한다.
-- 다음 작업: 검토된 3E 소스 인계 및 수정 검토 결과 확인 → 최소 하루 초안 UI → 3단계 전체 통합 수락 → 보고 후 중단.
+- 다음 작업: 메인 개발의 3단계 구현·통합 수락을 마친 뒤 이 문서의 상태를 최종 결과로 갱신하고, 최신 main을 받아 로컬 병합·검증한다. 문서와 제품의 정확한 전송 범위를 점검하고 승인된 범위에서 함께 게시한다. 4단계는 별도 진행 지시 후 시작한다.

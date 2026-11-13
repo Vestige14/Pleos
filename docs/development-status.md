@@ -78,7 +78,7 @@ Gleo의 패키지 접두사 action을 처리한 뒤 실험 앱 명령 수신과 
 
 ## 코어 검증 재현
 
-[README](../README.md)의 JDK 17·SDK 및 로컬 디렉터리 준비 후 실행한다. 프로젝트에서 제외된 파일을 복사할 필요는 없다.
+[환경 설정·실행 안내](SETUP.md)의 JDK 17·SDK 및 로컬 디렉터리 준비 후 실행한다. 프로젝트에서 제외된 파일을 복사할 필요는 없다.
 
 ```sh
 ./gradlew --no-daemon --console=plain testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
