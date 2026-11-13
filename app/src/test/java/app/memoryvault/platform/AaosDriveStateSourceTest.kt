@@ -1,14 +1,23 @@
 package app.memoryvault.platform
 
 import app.memoryvault.domain.DriveState
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,6 +25,116 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AaosDriveStateSourceTest {
+    @Test fun `slow getter cannot delay disconnect UNKNOWN or callback return`() = slowGetter(Signal.DISCONNECT)
+    @Test fun `slow getter cannot delay error UNKNOWN or callback return`() = slowGetter(Signal.ERROR)
+    @Test fun `slow getter cannot delay close UNKNOWN or return`() = slowGetter(Signal.CLOSE)
+    @Test fun `slow cleanup cannot delay disconnect UNKNOWN or callback return`() = slowCleanup(Signal.DISCONNECT)
+    @Test fun `slow cleanup cannot delay error UNKNOWN or callback return`() = slowCleanup(Signal.ERROR)
+    @Test fun `slow cleanup cannot delay close UNKNOWN or return`() = slowCleanup(Signal.CLOSE)
+
+    @Test fun `new ready waits for prior slow cleanup to finish`() {
+        ThreadFixture().use { fixture ->
+            val blocked = BlockingCall()
+            fixture.access.beforeUnregister = blocked::block
+            val disconnect = AsyncCall { fixture.signal(Signal.DISCONNECT) }
+            var reconnect: AsyncCall? = null
+            val next = FakeCarAccess()
+            try {
+                blocked.awaitEntered()
+                disconnect.assertReturned()
+                reconnect = AsyncCall { fixture.connector.latest.listener.onReady(next) }
+                reconnect.assertReturned()
+                assertEquals(DriveState.UNKNOWN, fixture.source.snapshot.value.state)
+                assertEquals(0, next.liveListenerCount)
+                assertEquals(0, next.totalReads)
+                blocked.release.countDown()
+                fixture.awaitIdle()
+                fixture.awaitParked()
+                assertEquals(0, fixture.access.liveListenerCount)
+                assertEquals(DriveState.PARKED, fixture.source.snapshot.value.state)
+            } finally {
+                blocked.release.countDown()
+                disconnect.join()
+                reconnect?.join()
+            }
+        }
+    }
+
+    @Test fun `registration completing after close is eventually unregistered`() {
+        ThreadFixture().use { fixture ->
+            val blocked = BlockingCall()
+            val next = FakeCarAccess().apply {
+                beforeRegisterProperty = { if (it == DriveProperty.SPEED) blocked.block() }
+            }
+            val reconnect = AsyncCall { fixture.connector.latest.listener.onReady(next) }
+            var closing: AsyncCall? = null
+            try {
+                blocked.awaitEntered()
+                closing = AsyncCall { fixture.source.close() }
+                closing.assertReturned()
+                assertEquals(DriveReadinessReason.CLOSED, fixture.source.snapshot.value.readinessReason)
+                blocked.release.countDown()
+                reconnect.join()
+                fixture.awaitIdle()
+                assertEquals(0, next.liveListenerCount)
+                assertEquals(3, next.unregisterAttempts)
+                assertEquals(1, fixture.connector.latest.closeCalls)
+                assertEquals(DriveReadinessReason.CLOSED, fixture.source.snapshot.value.readinessReason)
+            } finally {
+                blocked.release.countDown()
+                reconnect.join()
+                closing?.join()
+            }
+        }
+    }
+
+    private fun slowGetter(signal: Signal) {
+        ThreadFixture().use { fixture ->
+            val blocked = BlockingCall()
+            fixture.access.beforeReadUx = blocked::block
+            var invalidation: AsyncCall? = null
+            try {
+                blocked.awaitEntered()
+                invalidation = AsyncCall { fixture.signal(signal) }
+                invalidation.assertReturned()
+                assertEquals(DriveState.UNKNOWN, fixture.source.snapshot.value.state)
+                assertEquals(signal.reason, fixture.source.snapshot.value.readinessReason)
+                assertEquals(1L, blocked.release.count)
+                blocked.release.countDown()
+                fixture.awaitIdle()
+                assertEquals(DriveState.UNKNOWN, fixture.source.snapshot.value.state)
+                assertEquals(signal.reason, fixture.source.snapshot.value.readinessReason)
+                assertEquals(0, fixture.access.liveListenerCount)
+            } finally {
+                blocked.release.countDown()
+                invalidation?.join()
+            }
+        }
+    }
+
+    private fun slowCleanup(signal: Signal) {
+        ThreadFixture().use { fixture ->
+            val blocked = BlockingCall()
+            fixture.access.beforeUnregister = blocked::block
+            val invalidation = AsyncCall { fixture.signal(signal) }
+            try {
+                blocked.awaitEntered()
+                invalidation.assertReturned()
+                assertEquals(DriveState.UNKNOWN, fixture.source.snapshot.value.state)
+                assertEquals(signal.reason, fixture.source.snapshot.value.readinessReason)
+                assertEquals(1L, blocked.release.count)
+                blocked.release.countDown()
+                fixture.awaitIdle()
+                assertEquals(0, fixture.access.liveListenerCount)
+                assertEquals(DriveState.UNKNOWN, fixture.source.snapshot.value.state)
+                assertEquals(signal.reason, fixture.source.snapshot.value.readinessReason)
+            } finally {
+                blocked.release.countDown()
+                invalidation.join()
+            }
+        }
+    }
+
     @Test fun `starting waits for lifecycle ready before reading vehicle data`() = runTest {
         val fixture = fixture()
         fixture.use {
@@ -25,6 +144,7 @@ class AaosDriveStateSourceTest {
             assertEquals(DriveReadinessReason.CONNECTING, it.snapshot.readinessReason)
             assertEquals(0, it.access.totalReads)
             it.source.start()
+            runCurrent()
             assertEquals(1, it.connector.connections.size)
         }
     }
@@ -134,6 +254,7 @@ class AaosDriveStateSourceTest {
                 val callback = it.access.callback(DriveProperty.SPEED)
                 callback.onChange(reading(0f, status = status))
                 callback.onChange(reading(0f, timestamp = 60))
+                runCurrent()
                 assertEquals(DriveState.UNKNOWN, it.snapshot.state)
                 assertEquals(
                     if (status == VehicleStatus.UNAVAILABLE) DriveReadinessReason.PROPERTY_UNAVAILABLE
@@ -146,6 +267,7 @@ class AaosDriveStateSourceTest {
         fixture().use {
             it.connect()
             it.access.callback(DriveProperty.GEAR).onError()
+            runCurrent()
             assertEquals(DriveReadinessReason.PROPERTY_ERROR, it.snapshot.readinessReason)
             assertEquals(0, it.access.liveListenerCount)
         }
@@ -205,6 +327,7 @@ class AaosDriveStateSourceTest {
             val oldGear = it.access.callback(DriveProperty.GEAR)
             val oldUx = it.access.savedUxListener!!
             it.connector.latest.listener.onDisconnected()
+            runCurrent()
             val reads = it.access.totalReads
             assertEquals(DriveReadinessReason.DISCONNECTED, it.snapshot.readinessReason)
             assertEquals(null, it.snapshot.activeRestrictions)
@@ -217,6 +340,7 @@ class AaosDriveStateSourceTest {
             assertEquals(DriveState.UNKNOWN, it.snapshot.state)
             val next = FakeCarAccess().apply { values[DriveProperty.SPEED] = null }
             it.connector.latest.listener.onReady(next)
+            runCurrent()
             assertEquals(DriveReadinessReason.MISSING_SPEED, it.snapshot.readinessReason)
             oldGear.onChange(reading(8, timestamp = 80))
             oldUx(UxReading(true, 80))
@@ -229,6 +353,7 @@ class AaosDriveStateSourceTest {
         fixture().use {
             it.connect()
             it.connector.latest.listener.onReady(FakeCarAccess().apply { ux = null })
+            runCurrent()
             assertEquals(DriveState.UNKNOWN, it.snapshot.state)
             assertEquals(DriveReadinessReason.MISSING_UX, it.snapshot.readinessReason)
             assertEquals(0, it.access.liveListenerCount)
@@ -312,9 +437,11 @@ class AaosDriveStateSourceTest {
             it.connect()
             val old = it.connector.latest
             it.source.start()
+            runCurrent()
             assertTrue(old.closed)
             val new = it.connector.latest
             new.listener.onReady(FakeCarAccess())
+            runCurrent()
             assertEquals(DriveState.PARKED, it.snapshot.state)
             old.listener.onDisconnected()
             old.listener.onReady(FakeCarAccess().apply { ux = UxReading(true, 80) })
@@ -326,10 +453,13 @@ class AaosDriveStateSourceTest {
         fixture().use {
             it.connector.connectFailure = SecurityException()
             it.source.start()
+            runCurrent()
             assertEquals(DriveReadinessReason.PERMISSION_DENIED, it.snapshot.readinessReason)
             it.connector.connectFailure = null
             it.source.start()
+            runCurrent()
             it.connector.latest.listener.onReady(it.access)
+            runCurrent()
             assertEquals(DriveState.PARKED, it.snapshot.state)
         }
     }
@@ -360,6 +490,7 @@ class AaosDriveStateSourceTest {
         fixture.access.cleanupThrows = true
         fixture.connector.latest.cleanupThrows = true
         fixture.source.close()
+        runCurrent()
         assertEquals(DriveState.UNKNOWN, fixture.snapshot.state)
         assertEquals(DriveReadinessReason.CLOSED, fixture.snapshot.readinessReason)
         assertTrue(fixture.snapshot.cleanupFailed)
@@ -368,10 +499,26 @@ class AaosDriveStateSourceTest {
         assertEquals(0, fixture.access.liveListenerCount)
     }
 
+    @Test fun `cleanup failure prevents a replacement session from initializing`() = runTest {
+        fixture().use {
+            it.connect()
+            it.access.cleanupThrows = true
+            val next = FakeCarAccess()
+            it.connector.latest.listener.onReady(next)
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            runCurrent()
+            assertEquals(DriveReadinessReason.CLEANUP_FAILED, it.snapshot.readinessReason)
+            assertTrue(it.snapshot.cleanupFailed)
+            assertEquals(0, next.totalReads)
+            assertEquals(0, next.liveListenerCount)
+        }
+    }
+
     @Test fun `closing while connect is returning also closes the late connection handle`() = runTest {
         val fixture = fixture()
         fixture.connector.onConnect = { fixture.source.close() }
         fixture.source.start()
+        runCurrent()
         assertEquals(DriveReadinessReason.CLOSED, fixture.snapshot.readinessReason)
         assertTrue(fixture.connector.latest.closed)
         assertFalse(fixture.snapshot.cleanupFailed)
@@ -387,6 +534,7 @@ class AaosDriveStateSourceTest {
         }
         val next = FakeCarAccess()
         fixture.connector.latest.listener.onReady(next)
+        runCurrent()
         assertEquals(DriveReadinessReason.CLOSED, fixture.snapshot.readinessReason)
         assertEquals(0, next.liveListenerCount)
         assertEquals(0, next.totalReads)
@@ -399,20 +547,23 @@ class AaosDriveStateSourceTest {
             connector,
             StandardTestDispatcher(testScheduler),
             { 100 + testScheduler.currentTime * 1_000_000 },
-        ))
+        ), { testScheduler.runCurrent() })
     }
 
     private class Fixture(
         val connector: FakeCarConnector,
         val access: FakeCarAccess,
         val source: AaosDriveStateSource,
+        val drain: () -> Unit,
     ) : AutoCloseable {
         val snapshot get() = source.snapshot.value
         fun connect() {
             source.start()
+            drain()
             connector.latest.listener.onReady(access)
+            drain()
         }
-        override fun close() = source.close()
+        override fun close() { source.close(); drain() }
     }
 
     private class FakeCarConnector : CarConnector {
@@ -447,8 +598,10 @@ class AaosDriveStateSourceTest {
         var registrationFailure: DriveProperty? = null
         var registrationThrows = false
         var cleanupThrows = false
-        var beforeReadUx: (() -> Unit)? = null
+        @Volatile var beforeReadUx: (() -> Unit)? = null
         var beforeReadProperty: ((DriveProperty) -> Unit)? = null
+        @Volatile var beforeUnregister: (() -> Unit)? = null
+        var beforeRegisterProperty: ((DriveProperty) -> Unit)? = null
         var afterRegister: (() -> Unit)? = null
         var savedUxListener: ((UxReading) -> Unit)? = null
         var liveUx = false
@@ -468,11 +621,13 @@ class AaosDriveStateSourceTest {
             if (uxRegistrationFailure) throw IllegalStateException()
         }
         override fun unregisterUxListener() {
+            beforeUnregister?.invoke()
             unregisterAttempts++
             liveUx = false
             if (cleanupThrows) throw IllegalStateException()
         }
         override fun registerPropertyListener(property: DriveProperty, listener: VehicleListener): Boolean {
+            beforeRegisterProperty?.invoke(property)
             listeners[property] = listener
             allCallbacks += listener
             if (property == registrationFailure) {
@@ -483,6 +638,7 @@ class AaosDriveStateSourceTest {
             return true
         }
         override fun unregisterPropertyListener(listener: VehicleListener) {
+            beforeUnregister?.invoke()
             unregisterAttempts++
             listeners.entries.removeAll { it.value === listener }
             if (cleanupThrows) throw IllegalStateException()
@@ -500,6 +656,80 @@ class AaosDriveStateSourceTest {
             val current = values[property]
             beforeReadProperty?.invoke(property)
             return current
+        }
+    }
+
+    private enum class Signal(val reason: DriveReadinessReason) {
+        DISCONNECT(DriveReadinessReason.DISCONNECTED),
+        ERROR(DriveReadinessReason.PROPERTY_ERROR),
+        CLOSE(DriveReadinessReason.CLOSED),
+    }
+
+    private class BlockingCall {
+        private val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        fun block() {
+            entered.countDown()
+            check(release.await(10, TimeUnit.SECONDS)) { "Test did not release blocked I/O" }
+        }
+        fun awaitEntered() = assertTrue("I/O did not reach latch", entered.await(5, TimeUnit.SECONDS))
+    }
+
+    private class AsyncCall(action: () -> Unit) {
+        private val returned = CountDownLatch(1)
+        private val failure = AtomicReference<Throwable?>()
+        private val worker = thread(name = "mv03d-safety-event") {
+            try { action() } catch (problem: Throwable) { failure.set(problem) }
+            finally { returned.countDown() }
+        }
+        fun assertReturned() {
+            assertTrue("Safety event waited for external I/O", returned.await(1, TimeUnit.SECONDS))
+            failure.get()?.let { throw AssertionError("Safety event threw", it) }
+        }
+        fun join() {
+            worker.join(5_000)
+            assertFalse("Safety event thread leaked", worker.isAlive)
+        }
+    }
+
+    private class ThreadFixture : AutoCloseable {
+        private val executor = Executors.newSingleThreadExecutor { Thread(it, "mv03d-car-io") }
+        private val dispatcher = executor.asCoroutineDispatcher()
+        val connector = FakeCarConnector()
+        val access = FakeCarAccess()
+        val source = AaosDriveStateSource(connector, dispatcher, { 100 })
+        private lateinit var errorCallback: VehicleListener
+
+        init {
+            val connected = CountDownLatch(1)
+            connector.onConnect = { connected.countDown() }
+            source.start()
+            assertTrue("Connector did not run", connected.await(5, TimeUnit.SECONDS))
+            connector.latest.listener.onReady(access)
+            awaitParked()
+            errorCallback = access.callback(DriveProperty.GEAR)
+        }
+
+        fun awaitParked() = runBlocking {
+            withTimeout(5_000) { source.snapshot.first { it.state == DriveState.PARKED } }
+        }
+
+        fun signal(signal: Signal) = when (signal) {
+            Signal.DISCONNECT -> connector.latest.listener.onDisconnected()
+            Signal.ERROR -> errorCallback.onError()
+            Signal.CLOSE -> source.close()
+        }
+
+        fun awaitIdle() { executor.submit {}.get(5, TimeUnit.SECONDS) }
+
+        override fun close() {
+            try {
+                source.close()
+                awaitIdle()
+            } finally {
+                dispatcher.close()
+                assertTrue("Car I/O executor leaked", executor.awaitTermination(5, TimeUnit.SECONDS))
+            }
         }
     }
 

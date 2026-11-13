@@ -24,12 +24,10 @@ internal class AndroidCarConnector(private val context: Context) : CarConnector 
                 listener.onDisconnected()
                 return@createCar
             }
+            // Notify the generation change before any manager acquisition can enter Binder.
+            // AndroidCarAccess resolves managers only when the source's I/O actor uses it.
             try {
-                val ux = car.getCarManager(Car.CAR_UX_RESTRICTION_SERVICE) as? CarUxRestrictionsManager
-                    ?: throw CarReadFailure(DriveReadinessReason.UNSUPPORTED)
-                val properties = car.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager
-                    ?: throw CarReadFailure(DriveReadinessReason.UNSUPPORTED)
-                listener.onReady(AndroidCarAccess(ux, properties))
+                listener.onReady(AndroidCarAccess(car))
             } catch (failure: RuntimeException) {
                 listener.onFailure(readFailureReason(failure))
             } catch (_: LinkageError) {
@@ -42,10 +40,15 @@ internal class AndroidCarConnector(private val context: Context) : CarConnector 
     }
 }
 
-private class AndroidCarAccess(
-    private val ux: CarUxRestrictionsManager,
-    private val properties: CarPropertyManager,
-) : CarAccess {
+private class AndroidCarAccess(private val car: Car) : CarAccess {
+    private var acquiredUx: CarUxRestrictionsManager? = null
+    private var acquiredProperties: CarPropertyManager? = null
+    private val ux: CarUxRestrictionsManager
+        get() = acquiredUx ?: (car.getCarManager(Car.CAR_UX_RESTRICTION_SERVICE) as? CarUxRestrictionsManager
+            ?: throw CarReadFailure(DriveReadinessReason.UNSUPPORTED)).also { acquiredUx = it }
+    private val properties: CarPropertyManager
+        get() = acquiredProperties ?: (car.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager
+            ?: throw CarReadFailure(DriveReadinessReason.UNSUPPORTED)).also { acquiredProperties = it }
     private val callbacks = mutableMapOf<VehicleListener, CarPropertyManager.CarPropertyEventCallback>()
 
     override fun isSupported(property: DriveProperty) = properties.getCarPropertyConfig(property.id) != null
@@ -54,7 +57,7 @@ private class AndroidCarAccess(
         ux.registerListener { reading -> listener(reading.toReading()) }
     }
 
-    override fun unregisterUxListener() = ux.unregisterListener()
+    override fun unregisterUxListener() { acquiredUx?.unregisterListener() }
 
     override fun registerPropertyListener(property: DriveProperty, listener: VehicleListener): Boolean {
         val callback = object : CarPropertyManager.CarPropertyEventCallback {
@@ -81,7 +84,7 @@ private class AndroidCarAccess(
     }
 
     override fun unregisterPropertyListener(listener: VehicleListener) {
-        callbacks.remove(listener)?.let { properties.unregisterCallback(it) }
+        callbacks.remove(listener)?.let { acquiredProperties?.unregisterCallback(it) }
     }
 
     override fun readUx() = ux.currentCarUxRestrictions?.toReading()

@@ -10,10 +10,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 internal enum class DriveProperty { GEAR, SPEED }
@@ -43,13 +43,14 @@ internal fun interface CarConnector {
 }
 
 /**
- * Public AAOS observations only. No browser/transport-health inference or timestamp-age timeout.
- * All reads, callbacks and lifetime changes share one lock; each connection gets fresh inputs.
- * Read/status/registration failures latch UNKNOWN until a new connection or explicit start retry.
+ * Public AAOS observations only; no transport-health inference or timestamp-age timeout.
+ * A short lock owns state. A single I/O queue owns every external call and resource lifetime.
+ * Invalidating events publish UNKNOWN immediately; cleanup drains asynchronously, including
+ * resources acquired by an already-running registration/connect after invalidation.
  */
 class AaosDriveStateSource internal constructor(
     private val connector: CarConnector,
-    private val dispatcher: CoroutineDispatcher,
+    dispatcher: CoroutineDispatcher,
     private val elapsedRealtimeNanos: () -> Long,
 ) : DriveStateSource {
     constructor(context: Context) : this(
@@ -59,10 +60,11 @@ class AaosDriveStateSource internal constructor(
     )
 
     private val lock = Any()
-    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
+    private val ioScope = CoroutineScope(SupervisorJob() + dispatcher)
+    private val commands = Channel<() -> Unit>(Channel.UNLIMITED)
     private val mutableSnapshot = MutableStateFlow(DriveSnapshot())
     override val snapshot: StateFlow<DriveSnapshot> = mutableSnapshot.asStateFlow()
-    private var connection: AutoCloseable? = null
+    private var connection: ConnectionAttempt? = null
     private var connectionEpoch = 0L
     private var session: Session? = null
     private var refreshJob: Job? = null
@@ -70,191 +72,253 @@ class AaosDriveStateSource internal constructor(
     private var closed = false
     private var retryNeeded = false
     private var cleanupFailed = false
+    private var pendingCleanups = 0
+
+    init {
+        ioScope.launch {
+            try {
+                for (command in commands) {
+                    // Enqueuing is part of a state transition. Wait for its publication to finish
+                    // before starting I/O, then release the state lock for the entire external call.
+                    synchronized(lock) { Unit }
+                    command()
+                }
+            } finally {
+                ioScope.cancel()
+            }
+        }
+    }
 
     override fun start() = synchronized(lock) {
         if (closed || (started && !retryNeeded)) return@synchronized
         started = true
         retryNeeded = false
-        val epoch = ++connectionEpoch
-        disposeSession()
-        disconnect()
-        if (cleanupFailed) {
-            unknown(DriveReadinessReason.CLEANUP_FAILED)
-            return@synchronized
-        }
-        unknown(DriveReadinessReason.CONNECTING)
-        if (!isConnectionCurrent(epoch)) return@synchronized
-        val observer = object : CarConnectionListener {
-            override fun onReady(access: CarAccess) = synchronized(lock) {
-                if (isConnectionCurrent(epoch)) establishSession(access)
-            }
-
-            override fun onDisconnected() = synchronized(lock) {
-                if (isConnectionCurrent(epoch)) {
-                    disposeSession()
-                    retryNeeded = true
-                    unknown(DriveReadinessReason.DISCONNECTED)
-                }
-            }
-
-            override fun onFailure(reason: DriveReadinessReason) = synchronized(lock) {
-                if (isConnectionCurrent(epoch)) fail(reason)
-            }
-        }
-        try {
-            val created = connector.connect(observer)
-            // A synchronous callback can close/retry before connect returns its handle.
-            if (isConnectionCurrent(epoch)) connection = created else closeResource(created)
-        } catch (failure: RuntimeException) {
-            if (isConnectionCurrent(epoch)) {
-                ++connectionEpoch
-                fail(readFailureReason(failure))
-            }
-        } catch (_: LinkageError) {
-            if (isConnectionCurrent(epoch)) {
-                ++connectionEpoch
-                fail(DriveReadinessReason.UNSUPPORTED)
-            }
-        }
+        val previousConnection = connection
+        val previousSession = detachSessionLocked()
+        val current = ConnectionAttempt(++connectionEpoch)
+        connection = current
+        queueCleanupLocked(previousSession, previousConnection)
+        enqueueIo { connect(current) }
+        unknownLocked(DriveReadinessReason.CONNECTING)
     }
 
     override fun close() = synchronized(lock) {
         if (closed) return@synchronized
         closed = true
         ++connectionEpoch
-        disposeSession()
-        disconnect()
-        scope.cancel()
-        unknown(DriveReadinessReason.CLOSED)
+        val previous = connection
+        connection = null
+        queueCleanupLocked(detachSessionLocked(), previous)
+        // The actor must drain late-acquired resources before its scope is cancelled.
+        enqueueIo { commands.close() }
+        unknownLocked(DriveReadinessReason.CLOSED)
     }
 
-    private fun isConnectionCurrent(epoch: Long) = started && !closed && connectionEpoch == epoch
+    private fun enqueueIo(command: () -> Unit) {
+        check(commands.trySend(command).isSuccess)
+    }
 
-    private fun isCurrent(candidate: Session) = !closed && session === candidate
+    private fun isConnectionCurrentLocked(candidate: ConnectionAttempt) =
+        started && !closed && connection === candidate && candidate.epoch == connectionEpoch
 
-    private fun establishSession(access: CarAccess) {
-        disposeSession()
-        if (cleanupFailed) {
+    private fun isCurrentLocked(candidate: Session) =
+        session === candidate && isConnectionCurrentLocked(candidate.connection)
+
+    private fun canInitializeLocked(current: ConnectionAttempt): Boolean {
+        if (!isConnectionCurrentLocked(current)) return false
+        if (cleanupFailed || pendingCleanups != 0) {
             retryNeeded = true
-            unknown(DriveReadinessReason.CLEANUP_FAILED)
-            return
+            unknownLocked(if (cleanupFailed) DriveReadinessReason.CLEANUP_FAILED else DriveReadinessReason.CONNECTING)
+            return false
         }
-        retryNeeded = false
-        val current = Session(access)
-        session = current
-        unknown(DriveReadinessReason.CONNECTING)
-        if (!isCurrent(current)) return
-        try {
-            if (DriveProperty.entries.any { !access.isSupported(it) }) {
-                fail(DriveReadinessReason.UNSUPPORTED)
-                return
+        return true
+    }
+
+    private fun connect(current: ConnectionAttempt) {
+        if (!synchronized(lock) { canInitializeLocked(current) }) return
+        val observer = object : CarConnectionListener {
+            override fun onReady(access: CarAccess) = synchronized(lock) {
+                if (isConnectionCurrentLocked(current)) {
+                    val previous = detachSessionLocked()
+                    val next = Session(access, current)
+                    session = next
+                    retryNeeded = false
+                    queueCleanupLocked(previous)
+                    enqueueIo { initialize(next) }
+                    unknownLocked(DriveReadinessReason.CONNECTING)
+                }
             }
-            if (!isCurrent(current)) return
-            // Record each attempted registration before calling out: APIs may throw after allocation.
+
+            override fun onDisconnected() = synchronized(lock) {
+                if (isConnectionCurrentLocked(current)) {
+                    queueCleanupLocked(detachSessionLocked())
+                    retryNeeded = true
+                    unknownLocked(DriveReadinessReason.DISCONNECTED)
+                }
+            }
+
+            override fun onFailure(reason: DriveReadinessReason) = synchronized(lock) {
+                if (isConnectionCurrentLocked(current)) failLocked(reason)
+            }
+        }
+        try {
+            // The actor always retains a returned handle, even when close/retry happened in flight.
+            current.handle = connector.connect(observer)
+        } catch (failure: RuntimeException) {
+            connectFailed(current, readFailureReason(failure))
+        } catch (_: LinkageError) {
+            connectFailed(current, DriveReadinessReason.UNSUPPORTED)
+        }
+    }
+
+    private fun connectFailed(current: ConnectionAttempt, reason: DriveReadinessReason) = synchronized(lock) {
+        if (isConnectionCurrentLocked(current)) {
+            ++connectionEpoch
+            connection = null
+            queueCleanupLocked(detachSessionLocked(), current)
+            retryNeeded = true
+            unknownLocked(reason)
+        }
+    }
+
+    private fun initialize(current: Session) {
+        if (!synchronized(lock) { isCurrentLocked(current) && canInitializeLocked(current.connection) }) return
+        try {
+            for (property in DriveProperty.entries) {
+                val supported = current.access.isSupported(property)
+                if (!synchronized(lock) {
+                    if (!isCurrentLocked(current)) false
+                    else if (!supported) { failLocked(DriveReadinessReason.UNSUPPORTED); false }
+                    else true
+                }) return
+            }
+            // Resource fields belong only to this actor. Invalidation queues cleanup behind the
+            // current command, so even an API that allocates after close is fully accounted for.
             current.uxRegistrationAttempted = true
-            access.registerUxListener { reading ->
+            current.access.registerUxListener { reading ->
                 synchronized(lock) {
-                    if (isCurrent(current)) {
+                    if (isCurrentLocked(current)) {
                         ++current.uxRevision
                         current.ux = reading
-                        publish(current)
+                        publishLocked(current)
                     }
                 }
             }
-            if (!isCurrent(current)) return
+            if (!synchronized(lock) { isCurrentLocked(current) }) return
             for (property in DriveProperty.entries) {
                 val listener = object : VehicleListener {
                     override fun onChange(reading: VehicleReading) = synchronized(lock) {
-                        if (isCurrent(current)) {
+                        if (isCurrentLocked(current)) {
                             current.revisions[property] = current.revision(property) + 1
-                            acceptReading(current, property, reading)
-                            publish(current)
+                            acceptReadingLocked(current, property, reading)
+                            publishLocked(current)
                         }
                     }
 
                     override fun onError() = synchronized(lock) {
-                        if (isCurrent(current)) fail(DriveReadinessReason.PROPERTY_ERROR)
+                        if (isCurrentLocked(current)) failLocked(DriveReadinessReason.PROPERTY_ERROR)
                     }
                 }
                 current.listeners[property] = listener
-                if (!access.registerPropertyListener(property, listener)) {
-                    fail(DriveReadinessReason.LISTENER_REGISTRATION_FAILED)
-                    return
-                }
-                if (!isCurrent(current)) return
+                val registered = current.access.registerPropertyListener(property, listener)
+                if (!synchronized(lock) {
+                    if (!isCurrentLocked(current)) false
+                    else if (!registered) { failLocked(DriveReadinessReason.LISTENER_REGISTRATION_FAILED); false }
+                    else true
+                }) return
             }
         } catch (failure: RuntimeException) {
-            if (isCurrent(current)) fail(readFailureReason(failure, DriveReadinessReason.LISTENER_REGISTRATION_FAILED))
+            synchronized(lock) {
+                if (isCurrentLocked(current)) {
+                    failLocked(readFailureReason(failure, DriveReadinessReason.LISTENER_REGISTRATION_FAILED))
+                }
+            }
             return
         } catch (_: LinkageError) {
-            if (isCurrent(current)) fail(DriveReadinessReason.UNSUPPORTED)
+            synchronized(lock) { if (isCurrentLocked(current)) failLocked(DriveReadinessReason.UNSUPPORTED) }
             return
         }
         readCurrent(current)
-        if (!isCurrent(current)) return
-        current.initialized = true
-        publish(current)
-        if (!isCurrent(current)) return
-        refreshJob = scope.launch {
-            while (isActive) {
-                delay(1_000)
-                synchronized(lock) {
-                    if (isCurrent(current)) {
-                        readCurrent(current)
-                        publish(current)
-                    }
-                }
+        synchronized(lock) {
+            if (isCurrentLocked(current)) {
+                current.initialized = true
+                publishLocked(current)
+                if (isCurrentLocked(current)) scheduleRefreshLocked(current)
             }
         }
     }
 
     private fun readCurrent(current: Session) {
         try {
-            val uxRevision = current.uxRevision
+            val uxRevision = synchronized(lock) {
+                if (!isCurrentLocked(current)) return
+                current.uxRevision
+            }
             val ux = current.access.readUx()
-            if (!isCurrent(current)) return
-            if (uxRevision == current.uxRevision) current.ux = ux
+            synchronized(lock) {
+                if (!isCurrentLocked(current)) return
+                if (uxRevision == current.uxRevision) current.ux = ux
+                publishLocked(current)
+            }
             for (property in DriveProperty.entries) {
-                val revision = current.revision(property)
+                val revision = synchronized(lock) {
+                    if (!isCurrentLocked(current)) return
+                    current.revision(property)
+                }
                 val reading = current.access.readProperty(property)
-                if (!isCurrent(current)) return
-                // A getter can deliver a newer reentrant callback before returning cached data.
-                // Its explicit failure still invalidates this connection, even after a good callback.
-                if ((reading != null && reading.status != VehicleStatus.AVAILABLE) ||
-                    revision == current.revision(property)
-                ) acceptReading(current, property, reading)
-                if (!isCurrent(current)) return
+                synchronized(lock) {
+                    if (!isCurrentLocked(current)) return
+                    // A newer callback wins over stale good data, but explicit getter failure wins.
+                    if ((reading != null && reading.status != VehicleStatus.AVAILABLE) ||
+                        revision == current.revision(property)
+                    ) acceptReadingLocked(current, property, reading)
+                    publishLocked(current)
+                }
             }
         } catch (failure: RuntimeException) {
-            if (isCurrent(current)) fail(readFailureReason(failure))
+            synchronized(lock) { if (isCurrentLocked(current)) failLocked(readFailureReason(failure)) }
         } catch (_: LinkageError) {
-            if (isCurrent(current)) fail(DriveReadinessReason.UNSUPPORTED)
+            synchronized(lock) { if (isCurrentLocked(current)) failLocked(DriveReadinessReason.UNSUPPORTED) }
         }
     }
 
-    private fun acceptReading(current: Session, property: DriveProperty, reading: VehicleReading?) {
+    private fun scheduleRefreshLocked(current: Session) {
+        refreshJob = ioScope.launch {
+            delay(1_000)
+            synchronized(lock) {
+                if (isCurrentLocked(current)) enqueueIo {
+                    readCurrent(current)
+                    synchronized(lock) {
+                        if (isCurrentLocked(current)) scheduleRefreshLocked(current)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun acceptReadingLocked(current: Session, property: DriveProperty, reading: VehicleReading?) {
         if (reading == null) {
             current.readings[property] = null
             return
         }
         when (reading.status) {
-            VehicleStatus.UNAVAILABLE -> { fail(DriveReadinessReason.PROPERTY_UNAVAILABLE); return }
-            VehicleStatus.ERROR -> { fail(DriveReadinessReason.PROPERTY_ERROR); return }
+            VehicleStatus.UNAVAILABLE -> { failLocked(DriveReadinessReason.PROPERTY_UNAVAILABLE); return }
+            VehicleStatus.ERROR -> { failLocked(DriveReadinessReason.PROPERTY_ERROR); return }
             VehicleStatus.AVAILABLE -> Unit
         }
         val previous = current.readings[property]
         if (previous != null && reading.timestampNanos > 0) {
             if (reading.timestampNanos < previous.timestampNanos) return
             if (reading.timestampNanos == previous.timestampNanos && reading.value != previous.value) {
-                fail(DriveReadinessReason.INVALID_TIMESTAMP)
+                failLocked(DriveReadinessReason.INVALID_TIMESTAMP)
                 return
             }
         }
         current.readings[property] = reading
     }
 
-    private fun publish(current: Session) {
-        if (!isCurrent(current)) return
+    private fun publishLocked(current: Session) {
+        if (!isCurrentLocked(current)) return
         val evaluated = DriveReadiness.evaluate(
             true, current.ux, current.readings[DriveProperty.GEAR], current.readings[DriveProperty.SPEED],
             elapsedRealtimeNanos(),
@@ -264,14 +328,14 @@ class AaosDriveStateSource internal constructor(
         } else evaluated
     }
 
-    private fun fail(reason: DriveReadinessReason) {
+    private fun failLocked(reason: DriveReadinessReason) {
         val ux = session?.ux
-        disposeSession()
+        queueCleanupLocked(detachSessionLocked())
         retryNeeded = true
-        unknown(reason, ux)
+        unknownLocked(reason, ux)
     }
 
-    private fun unknown(reason: DriveReadinessReason, ux: UxReading? = null) {
+    private fun unknownLocked(reason: DriveReadinessReason, ux: UxReading? = null) {
         mutableSnapshot.value = DriveSnapshot(
             requiresDistractionOptimization = ux?.requiresDistractionOptimization,
             activeRestrictions = ux?.activeRestrictions,
@@ -280,47 +344,74 @@ class AaosDriveStateSource internal constructor(
         )
     }
 
-    private fun disposeSession() {
+    private fun detachSessionLocked(): Session? {
         refreshJob?.cancel()
         refreshJob = null
-        val previous = session ?: return
-        session = null // Reject reentrant and queued callbacks before unregistering anything.
-        for (listener in previous.listeners.values.toList().asReversed()) {
-            cleanup { previous.access.unregisterPropertyListener(listener) }
+        val previous = session
+        session = null
+        return previous
+    }
+
+    private fun queueCleanupLocked(previousSession: Session?, previousConnection: ConnectionAttempt? = null) {
+        val cleanupSession = previousSession?.takeUnless { it.cleanupScheduled }
+        val cleanupConnection = previousConnection?.takeUnless { it.cleanupScheduled }
+        if (cleanupSession == null && cleanupConnection == null) return
+        cleanupSession?.cleanupScheduled = true
+        cleanupConnection?.cleanupScheduled = true
+        ++pendingCleanups
+        enqueueIo {
+            var failed = false
+            if (cleanupSession != null) {
+                for (listener in cleanupSession.listeners.values.toList().asReversed()) {
+                    if (!cleanup { cleanupSession.access.unregisterPropertyListener(listener) }) failed = true
+                }
+                if (cleanupSession.uxRegistrationAttempted &&
+                    !cleanup { cleanupSession.access.unregisterUxListener() }
+                ) failed = true
+            }
+            cleanupConnection?.handle?.let { if (!cleanup { it.close() }) failed = true }
+            synchronized(lock) {
+                --pendingCleanups
+                if (failed) {
+                    cleanupFailed = true
+                    retryNeeded = true
+                    val active = detachSessionLocked()
+                    queueCleanupLocked(active)
+                    if (closed) unknownLocked(DriveReadinessReason.CLOSED)
+                    else if (active != null) unknownLocked(DriveReadinessReason.CLEANUP_FAILED)
+                    else mutableSnapshot.value = mutableSnapshot.value.copy(cleanupFailed = true)
+                }
+            }
         }
-        if (previous.uxRegistrationAttempted) cleanup { previous.access.unregisterUxListener() }
     }
 
-    private fun disconnect() {
-        val previous = connection
-        connection = null
-        if (previous != null) closeResource(previous)
+    private inline fun cleanup(action: () -> Unit): Boolean = try {
+        action()
+        true
+    } catch (_: Exception) {
+        false
+    } catch (_: LinkageError) {
+        false
     }
 
-    private fun closeResource(resource: AutoCloseable) {
-        cleanup { resource.close() }
-        if (closed) unknown(DriveReadinessReason.CLOSED)
+    private class ConnectionAttempt(val epoch: Long) {
+        // Handle is I/O-actor owned; scheduling metadata is state-lock owned.
+        var handle: AutoCloseable? = null
+        var cleanupScheduled = false
     }
 
-    private inline fun cleanup(action: () -> Unit) {
-        try {
-            action()
-        } catch (_: Exception) {
-            cleanupFailed = true
-        } catch (_: LinkageError) {
-            cleanupFailed = true
-        }
-    }
-
-    private class Session(val access: CarAccess) {
+    private class Session(val access: CarAccess, val connection: ConnectionAttempt) {
+        // Input/identity fields are state-lock owned.
         var initialized = false
         var ux: UxReading? = null
         var uxRevision = 0L
-        var uxRegistrationAttempted = false
-        val listeners = linkedMapOf<DriveProperty, VehicleListener>()
         val readings = mutableMapOf<DriveProperty, VehicleReading?>()
         val revisions = mutableMapOf<DriveProperty, Long>()
         fun revision(property: DriveProperty) = revisions[property] ?: 0L
+        var cleanupScheduled = false
+        // Only the I/O actor reads/writes registration resources.
+        var uxRegistrationAttempted = false
+        val listeners = linkedMapOf<DriveProperty, VehicleListener>()
     }
 }
 

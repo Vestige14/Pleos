@@ -21,8 +21,9 @@ enum class DriveReadinessReason {
 interface DriveStateSource : AutoCloseable {
     val snapshot: StateFlow<DriveSnapshot>
 
-    /** Starts observation, or retries a failed connection. A closed source cannot be restarted. */
+    /** Schedules observation/retry. Initial readiness is asynchronous; a closed source cannot restart. */
     fun start()
 
+    /** Publishes UNKNOWN synchronously; external cleanup drains asynchronously after in-flight I/O. */
     override fun close()
 }
