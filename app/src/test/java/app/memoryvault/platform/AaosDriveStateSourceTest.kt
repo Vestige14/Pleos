@@ -3,10 +3,12 @@ package app.memoryvault.platform
 import app.memoryvault.domain.DriveState
 import app.memoryvault.domain.VoiceMemoOutcome
 import app.memoryvault.domain.VoiceMemoUseCase
+import app.memoryvault.domain.VoiceCancelReason
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.flowOf
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -33,6 +35,116 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AaosDriveStateSourceTest {
+    @Test fun `UNKNOWN generation survives stable recovery and reconnect but not transition alone`() = runTest {
+        fixture().use {
+            it.connect()
+            val first = it.snapshot.invalidationGeneration
+            it.access.emitUx(UxReading(true, 80))
+            assertEquals(DriveState.TRANSITION, it.snapshot.state)
+            assertEquals(first, it.snapshot.invalidationGeneration)
+            it.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
+            assertEquals(DriveState.DRIVING, it.snapshot.state)
+            assertEquals(first, it.snapshot.invalidationGeneration)
+            it.access.emitUx(UxReading(false, 80))
+            assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            assertEquals(first + 1, it.snapshot.invalidationGeneration)
+            it.access.emitUx(UxReading(false, 80))
+            assertEquals(first + 1, it.snapshot.invalidationGeneration)
+            it.access.emitUx(UxReading(true, 80))
+            assertEquals(DriveState.DRIVING, it.snapshot.state)
+            assertEquals(first + 1, it.snapshot.invalidationGeneration)
+            it.connector.latest.listener.onDisconnected()
+            assertEquals(first + 2, it.snapshot.invalidationGeneration)
+            runCurrent()
+            it.connector.latest.listener.onReady(FakeCarAccess())
+            runCurrent()
+            assertEquals(DriveState.PARKED, it.snapshot.state)
+            assertEquals(first + 2, it.snapshot.invalidationGeneration)
+        }
+    }
+    @Test fun `production bridge rejects authoritative UNKNOWN before queued state consumers run`() = runTest {
+        fixture().use { fixture ->
+            fixture.connect()
+            fixture.access.emitUx(UxReading(true, 80))
+            fixture.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
+            val bridge = DriveSafetyBridge(fixture.source.snapshot)
+            runCurrent()
+            assertEquals(DriveState.DRIVING, bridge.state.value)
+            val saved = mutableListOf<String>()
+            val useCase = VoiceMemoUseCase(bridge.state, { _, text, _ -> saved += text; 31L }, driveSafety = bridge)
+            fixture.access.emitUx(UxReading(false, 80))
+            assertEquals(DriveState.UNKNOWN, fixture.snapshot.state)
+            val input = GateInput(flowOf(SpeechEvent.Final("must not start")))
+            assertEquals(VoiceMemoOutcome.Blocked, useCase.record("stale-gate", 1L, input))
+            assertEquals(DriveState.UNKNOWN, bridge.state.value)
+            assertEquals(0, input.eventsCalls)
+            assertTrue(input.cleanup.isEmpty())
+            assertTrue(saved.isEmpty())
+        }
+    }
+
+    @Test fun `production queued bridge preserves short UNKNOWN across recovery and permits a fresh session`() = runTest {
+        fixture().use { fixture ->
+            fixture.connect()
+            fixture.access.emitUx(UxReading(true, 80))
+            fixture.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
+            val bridge = DriveSafetyBridge(fixture.source.snapshot)
+            runCurrent()
+            val saved = mutableListOf<String>()
+            val useCase = VoiceMemoUseCase(bridge.state, { _, text, _ -> saved += text; 31L }, driveSafety = bridge)
+            val input = GateInput()
+            val run = async { useCase.record("short-unknown", 1L, input) }
+            runCurrent()
+            fixture.access.emitUx(UxReading(false, 80))
+            assertEquals(DriveState.UNKNOWN, fixture.snapshot.state)
+            fixture.access.emitUx(UxReading(true, 80))
+            assertEquals(DriveState.DRIVING, fixture.snapshot.state)
+            input.events.trySend(SpeechEvent.Final("stale final"))
+            runCurrent()
+            assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.UNKNOWN), run.await())
+            assertTrue(saved.isEmpty())
+            assertEquals(listOf("cancel", "close"), input.cleanup)
+            assertEquals(VoiceMemoOutcome.Saved(31L), useCase.record("fresh", 2L,
+                GateInput(flowOf(SpeechEvent.Final("fresh raw")))))
+            assertEquals(listOf("fresh raw"), saved)
+        }
+    }
+
+    @Test fun `production queued invalidation during storage cannot claim Saved after recovery`() = runTest {
+        fixture().use { fixture ->
+            fixture.connect()
+            fixture.access.emitUx(UxReading(true, 80))
+            fixture.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
+            val bridge = DriveSafetyBridge(fixture.source.snapshot)
+            runCurrent()
+            val mayReturn = CompletableDeferred<Unit>()
+            val committed = mutableListOf<String>()
+            val useCase = VoiceMemoUseCase(bridge.state, { _, text, _ ->
+                committed += text; mayReturn.await(); 31L
+            }, driveSafety = bridge)
+            val input = GateInput(flowOf(SpeechEvent.Final("committed")))
+            val run = async { useCase.record("saving", 1L, input) }
+            runCurrent()
+            assertEquals(listOf("committed"), committed)
+            fixture.access.emitUx(UxReading(false, 80))
+            fixture.access.emitUx(UxReading(true, 80))
+            mayReturn.complete(Unit)
+            runCurrent()
+            assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.UNKNOWN), run.await())
+            assertEquals(listOf("committed"), committed)
+            assertEquals(listOf("cancel", "close"), input.cleanup)
+        }
+    }
+
+    private class GateInput(private val source: kotlinx.coroutines.flow.Flow<SpeechEvent>? = null) : SpeechInput {
+        val events = Channel<SpeechEvent>(Channel.UNLIMITED)
+        var eventsCalls = 0
+        val cleanup = mutableListOf<String>()
+        override fun events(): kotlinx.coroutines.flow.Flow<SpeechEvent> { eventsCalls++; return source ?: events.receiveAsFlow() }
+        override fun stopCapture() = Unit
+        override fun cancel() { cleanup += "cancel" }
+        override fun close() { cleanup += "close" }
+    }
     @Test fun `transition deadline does not wait for a blocked Binder IO queue`() = runTest {
         ThreadFixture(StandardTestDispatcher(testScheduler)).use { fixture ->
             val blocked = BlockingCall()
@@ -56,10 +168,8 @@ class AaosDriveStateSourceTest {
             fixture.connect()
             fixture.access.emitUx(UxReading(true, 80))
             fixture.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
-            val drive = MutableStateFlow(fixture.snapshot.state)
-            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-                fixture.source.snapshot.collect { drive.value = it.state }
-            }
+            val bridge = DriveSafetyBridge(fixture.source.snapshot)
+            runCurrent()
             val events = Channel<SpeechEvent>(Channel.UNLIMITED)
             val input = object : SpeechInput {
                 override fun events() = events.receiveAsFlow()
@@ -67,7 +177,7 @@ class AaosDriveStateSourceTest {
                 override fun cancel() = Unit
                 override fun close() = Unit
             }
-            val useCase = VoiceMemoUseCase(drive, { _, _, _ -> 31L })
+            val useCase = VoiceMemoUseCase(bridge.state, { _, _, _ -> 31L }, driveSafety = bridge)
             val run = async { useCase.record("transition", 1L, input) }
             runCurrent()
             fixture.access.emit(DriveProperty.GEAR, reading(4, timestamp = 70))
@@ -88,8 +198,10 @@ class AaosDriveStateSourceTest {
     @Test fun `eligible transition has a fixed 500ms budget that callbacks cannot extend`() = runTest {
         fixture().use {
             it.connect()
+            val generation = it.snapshot.invalidationGeneration
             it.access.emitUx(UxReading(true, 80))
             assertEquals("TRANSITION", it.snapshot.state.name)
+            assertEquals(generation, it.snapshot.invalidationGeneration)
             advanceTimeBy(499)
             runCurrent()
             it.access.emitUx(UxReading(true, 80))
@@ -97,8 +209,10 @@ class AaosDriveStateSourceTest {
             advanceTimeBy(1)
             runCurrent()
             assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            assertEquals(generation + 1, it.snapshot.invalidationGeneration)
             it.access.emitUx(UxReading(true, 80))
             assertEquals(DriveState.UNKNOWN, it.snapshot.state)
+            assertEquals(generation + 1, it.snapshot.invalidationGeneration)
             advanceTimeBy(100)
             it.access.emit(DriveProperty.GEAR, reading(8, timestamp = 60))
             assertEquals(DriveState.DRIVING, it.snapshot.state)

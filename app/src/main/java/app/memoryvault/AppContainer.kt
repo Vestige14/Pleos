@@ -11,6 +11,7 @@ import app.memoryvault.domain.DriveState
 import app.memoryvault.domain.VoiceMemoUseCase
 import app.memoryvault.platform.AaosDriveStateSource
 import app.memoryvault.platform.PleosSpeechInput
+import app.memoryvault.platform.DriveSafetyBridge
 import app.memoryvault.service.ReadyNotificationPolicy
 import app.memoryvault.service.StorageReadiness
 import app.memoryvault.service.VoiceNotifications
@@ -22,12 +23,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -68,7 +66,8 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
     private val started = AtomicBoolean(false)
     private val driveSource = AaosDriveStateSource(appContext)
     val driveSnapshot = driveSource.snapshot
-    val driveState = driveSnapshot.map { it.state }.stateIn(scope, SharingStarted.Eagerly, DriveState.UNKNOWN)
+    private val driveSafety = DriveSafetyBridge(driveSnapshot)
+    val driveState = driveSafety.state
     val notifications = VoiceNotifications(appContext)
     private val preferences = appContext.getSharedPreferences("voice_setup", Context.MODE_PRIVATE)
     private val mutableReadyEnabled = MutableStateFlow(preferences.getBoolean("ready_enabled", false))
@@ -93,7 +92,7 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
     private val voice = VoiceMemoUseCase(driveState, { id, text, capturedAt ->
         val ready = repository.value as? RepositoryState.Ready ?: error("Storage unavailable")
         ready.repository.saveVoiceMemo(id, text, capturedAt)
-    })
+    }, driveSafety = driveSafety)
 
     fun start() {
         if (!started.compareAndSet(false, true)) return

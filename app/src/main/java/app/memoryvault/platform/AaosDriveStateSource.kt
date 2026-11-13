@@ -330,16 +330,16 @@ class AaosDriveStateSource internal constructor(
             now,
         )
         if (!current.initialized) {
-            mutableSnapshot.value = if (evaluated.state != DriveState.UNKNOWN) {
+            publishSnapshotLocked(if (evaluated.state != DriveState.UNKNOWN) {
                 evaluated.copy(state = DriveState.UNKNOWN, readinessReason = DriveReadinessReason.CONNECTING)
-            } else evaluated
+            } else evaluated)
             return
         }
         if (evaluated.state == DriveState.PARKED || evaluated.state == DriveState.DRIVING) {
             clearTransitionLocked(current)
             current.transitionArmed = true
             current.transitionExpired = false
-            mutableSnapshot.value = evaluated
+            publishSnapshotLocked(evaluated)
             return
         }
         val candidate = DriveReadiness.isTransitionCandidate(
@@ -361,13 +361,13 @@ class AaosDriveStateSource internal constructor(
                     }
                 }
             }
-            mutableSnapshot.value = evaluated.copy(state = DriveState.TRANSITION, readinessReason = DriveReadinessReason.TRANSITION)
+            publishSnapshotLocked(evaluated.copy(state = DriveState.TRANSITION, readinessReason = DriveReadinessReason.TRANSITION))
         } else {
             clearTransitionLocked(current)
             current.transitionArmed = false
-            mutableSnapshot.value = if (candidate && current.transitionExpired) {
+            publishSnapshotLocked(if (candidate && current.transitionExpired) {
                 evaluated.copy(readinessReason = DriveReadinessReason.TRANSITION_TIMEOUT)
-            } else evaluated
+            } else evaluated)
         }
     }
 
@@ -385,11 +385,19 @@ class AaosDriveStateSource internal constructor(
     }
 
     private fun unknownLocked(reason: DriveReadinessReason, ux: UxReading? = null) {
-        mutableSnapshot.value = DriveSnapshot(
+        publishSnapshotLocked(DriveSnapshot(
             requiresDistractionOptimization = ux?.requiresDistractionOptimization,
             activeRestrictions = ux?.activeRestrictions,
             readinessReason = reason,
             cleanupFailed = cleanupFailed,
+        ))
+    }
+
+    private fun publishSnapshotLocked(next: DriveSnapshot) {
+        val previous = mutableSnapshot.value
+        val enteredUnknown = next.state == DriveState.UNKNOWN && previous.state != DriveState.UNKNOWN
+        mutableSnapshot.value = next.copy(
+            invalidationGeneration = previous.invalidationGeneration + if (enteredUnknown) 1L else 0L,
         )
     }
 
@@ -429,7 +437,7 @@ class AaosDriveStateSource internal constructor(
                     queueCleanupLocked(active)
                     if (closed) unknownLocked(DriveReadinessReason.CLOSED)
                     else if (active != null) unknownLocked(DriveReadinessReason.CLEANUP_FAILED)
-                    else mutableSnapshot.value = mutableSnapshot.value.copy(cleanupFailed = true)
+                    else publishSnapshotLocked(mutableSnapshot.value.copy(cleanupFailed = true))
                 }
             }
         }

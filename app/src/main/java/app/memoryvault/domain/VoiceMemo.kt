@@ -29,6 +29,12 @@ enum class VoiceFailure { RECOGNITION, CAPTURE, STORAGE }
 /** CALLER also covers a coroutine cancellation propagated from an external boundary. */
 enum class VoiceCancelReason { USER, UNKNOWN, CALLER }
 
+data class VoiceDriveSnapshot(val state: DriveState, val invalidationGeneration: Long)
+interface VoiceDriveSafety {
+    fun current(): VoiceDriveSnapshot
+    suspend fun awaitInvalidation(generation: Long)
+}
+
 sealed interface VoiceMemoOutcome {
     val cleanupFailed: Boolean get() = false
     data object Blocked : VoiceMemoOutcome
@@ -64,6 +70,7 @@ class VoiceMemoUseCase(
     private val saveVoiceMemo: suspend (sessionId: String, text: String, capturedAt: Long) -> Long,
     private val captureTimeoutMs: Long = 15_000L,
     private val finalTimeoutMs: Long = 20_000L,
+    private val driveSafety: VoiceDriveSafety? = null,
 ) {
     init {
         require(captureTimeoutMs > 0L) { "Capture timeout must be positive" }
@@ -80,7 +87,8 @@ class VoiceMemoUseCase(
         currentCoroutineContext().ensureActive()
         val session = VoiceMemoSession()
         if (!active.compareAndSet(null, session)) return VoiceMemoOutcome.Busy
-        if (!DrivePolicy.canStartVoice(driveState.value)) {
+        val acceptedDrive = currentDriveSnapshot()
+        if (!DrivePolicy.canStartVoice(acceptedDrive.state)) {
             active.compareAndSet(session, null)
             return VoiceMemoOutcome.Blocked
         }
@@ -90,7 +98,7 @@ class VoiceMemoUseCase(
             var outcome: VoiceMemoOutcome? = null
             var failure: Throwable? = null
             try {
-                outcome = runSession(session, sessionId, capturedAt, input)
+                outcome = runSession(session, sessionId, capturedAt, input, acceptedDrive.invalidationGeneration)
             } catch (thrown: Throwable) {
                 // Preserve coroutine cancellation/fatal failures until resources have been attempted.
                 failure = thrown
@@ -121,23 +129,25 @@ class VoiceMemoUseCase(
         sessionId: String,
         capturedAt: Long,
         input: SpeechInput,
+        acceptedGeneration: Long,
     ): VoiceMemoOutcome = supervisorScope {
         val safety = launch(start = CoroutineStart.UNDISPATCHED) {
-            driveState.first { it == DriveState.UNKNOWN }
+            if (driveSafety != null) driveSafety.awaitInvalidation(acceptedGeneration)
+            else driveState.first { it == DriveState.UNKNOWN }
             session.cancel(VoiceCancelReason.UNKNOWN)
         }
         try {
             val work = async(start = CoroutineStart.UNDISPATCHED) {
                 session.attach(currentCoroutineContext().job)
-                checkCancellation(session)
+                checkCancellation(session, acceptedGeneration)
                 when (val recognition = awaitFinal(input)) {
                     is Recognition.Unsuccessful -> recognition.outcome
                     is Recognition.Final -> {
-                        checkCancellation(session)
+                        checkCancellation(session, acceptedGeneration)
                         mutableState.value = VoiceState.Processing
                         try {
                             val noteId = saveVoiceMemo(sessionId, recognition.text, capturedAt)
-                            checkCancellation(session)
+                            checkCancellation(session, acceptedGeneration)
                             VoiceMemoOutcome.Saved(noteId)
                         } catch (cancelled: CancellationException) {
                             throw cancelled
@@ -163,8 +173,14 @@ class VoiceMemoUseCase(
         }
     }
 
-    private suspend fun checkCancellation(session: VoiceMemoSession) {
-        if (driveState.value == DriveState.UNKNOWN) session.cancel(VoiceCancelReason.UNKNOWN)
+    private fun currentDriveSnapshot(): VoiceDriveSnapshot =
+        driveSafety?.current() ?: VoiceDriveSnapshot(driveState.value, 0L)
+
+    private suspend fun checkCancellation(session: VoiceMemoSession, acceptedGeneration: Long) {
+        val current = currentDriveSnapshot()
+        if (current.state == DriveState.UNKNOWN || current.invalidationGeneration != acceptedGeneration) {
+            session.cancel(VoiceCancelReason.UNKNOWN)
+        }
         currentCoroutineContext().ensureActive()
     }
 

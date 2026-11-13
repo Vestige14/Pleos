@@ -9,6 +9,8 @@ data class DriveSnapshot(
     val activeRestrictions: Int? = null,
     val readinessReason: DriveReadinessReason = DriveReadinessReason.NOT_STARTED,
     val cleanupFailed: Boolean = false,
+    /** Increments on UNKNOWN entry; normal recovery and reconnect never reset it. */
+    val invalidationGeneration: Long = 0L,
 )
 
 enum class DriveReadinessReason {
