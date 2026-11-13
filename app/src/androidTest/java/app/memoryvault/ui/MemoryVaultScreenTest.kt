@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -132,6 +133,45 @@ class MemoryVaultScreenTest {
         compose.waitForIdle()
         compose.runOnIdle { assertEquals(listOf("v1:  직접 쓴 메모  "), ui.saved) }
         compose.onNodeWithTag("memo-input").assertDoesNotExist()
+    }
+
+    @Test fun anotherTargetRequiresExplicitDiscard_andCancelPreservesTheSingleUnsentDraft() {
+        val ui = FixtureUi(DriveState.PARKED)
+        val firstDay = (ui.day.value as DayDraftState.Ready).draft
+        val secondCard = firstDay.cards.single().let { it.copy(visit = it.visit.copy(id = "v2", placeName = "둘째 방문")) }
+        ui.day.value = DayDraftState.Ready(firstDay.copy(cards = firstDay.cards + secondCard))
+        compose.setContent { MemoryVaultTheme { MemoryVaultScreen(ui, onRequestPermissions = {}) } }
+        compose.onAllNodesWithText("메모 추가")[0].performScrollTo().performClick()
+        compose.onNodeWithTag("memo-input").performTextInput("첫 방문 미전송 초안")
+        compose.onNodeWithText("닫기 · 초안 보관").performClick()
+        compose.onAllNodesWithText("메모 추가")[1].performScrollTo().performClick()
+        compose.onNodeWithTag("discard-draft-confirmation").assertIsDisplayed()
+        compose.onNodeWithText("기존 초안 유지").performClick()
+        compose.onNodeWithText("작성 중인 메모 이어 쓰기").performScrollTo().performClick()
+        compose.onNodeWithTag("memo-input").assertTextContains("첫 방문 미전송 초안")
+        compose.onNodeWithText("닫기 · 초안 보관").performClick()
+        compose.onAllNodesWithText("메모 추가")[1].performScrollTo().performClick()
+        compose.onNodeWithText("초안 버리고 새로 쓰기").performClick()
+        compose.onNodeWithTag("memo-input").performTextInput("둘째 방문 메모")
+        compose.onNodeWithText("저장").performClick()
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(listOf("v2:둘째 방문 메모"), ui.saved) }
+    }
+
+    @Test fun unknownAndParkedInTheSameUiTurnClosesEditorUntilExplicitResume() {
+        val ui = FixtureUi(DriveState.PARKED)
+        compose.setContent { MemoryVaultTheme { MemoryVaultScreen(ui, onRequestPermissions = {}) } }
+        compose.onNodeWithText("메모 추가").performScrollTo().performClick()
+        compose.onNodeWithTag("memo-input").performTextInput("짧은 연결 손실 전 초안")
+        compose.runOnIdle {
+            ui.driveSnapshot.value = DriveSnapshot(state = DriveState.UNKNOWN, invalidationGeneration = 1)
+            ui.driveSnapshot.value = DriveSnapshot(state = DriveState.PARKED, invalidationGeneration = 1)
+        }
+        compose.onNodeWithTag("memo-input").assertDoesNotExist()
+        compose.onNodeWithText("짧은 연결 손실 전 초안").assertDoesNotExist()
+        compose.runOnIdle { assertTrue(ui.saved.isEmpty()) }
+        compose.onNodeWithText("작성 중인 메모 이어 쓰기").performScrollTo().performClick()
+        compose.onNodeWithTag("memo-input").assertTextContains("짧은 연결 손실 전 초안")
     }
 
     private class Owner : LifecycleOwner {

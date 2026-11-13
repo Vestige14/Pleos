@@ -76,9 +76,10 @@ fun MemoryVaultTheme(content: @Composable () -> Unit) {
 }
 
 private val editorSaver = listSaver<MemoEditorState, Any>(
-    save = { listOf(it.visitId ?: "", it.noteId ?: -1L, it.text, it.isOpen) },
+    save = { listOf(it.visitId ?: "", it.noteId ?: -1L, it.text, it.isOpen, it.openedGeneration) },
     restore = {
-        MemoEditorState((it[0] as String).ifEmpty { null }, (it[1] as Long).takeIf { id -> id >= 0 }, it[2] as String, it[3] as Boolean)
+        MemoEditorState((it[0] as String).ifEmpty { null }, (it[1] as Long).takeIf { id -> id >= 0 },
+            it[2] as String, it[3] as Boolean, it.getOrNull(4) as? Long ?: 0L)
     },
 )
 
@@ -99,9 +100,9 @@ fun MemoryVaultScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
 
-    LaunchedEffect(snapshot.state) {
-        if (snapshot.state != DriveState.PARKED) {
-            editor = editor.onDriveChanged(snapshot.state)
+    LaunchedEffect(snapshot.state, snapshot.invalidationGeneration) {
+        if (snapshot.state != DriveState.PARKED || snapshot.invalidationGeneration != editor.openedGeneration) {
+            editor = editor.onDriveChanged(snapshot.state, snapshot.invalidationGeneration)
             focus.clearFocus(force = true)
             keyboard?.hide()
         }
@@ -139,9 +140,13 @@ fun MemoryVaultScreen(
                     if (ui.driveSnapshot.value.state == DriveState.DRIVING) ui.startVoice()
                 }, onCancel = ui::cancelVoice)
                 typedNotice?.let { Text(stringResource(it), modifier = Modifier.testTag("typed-result")) }
-                if (editor.visitId != null && editor.text.isNotEmpty() && !editor.isOpen) {
+                if (editor.visitId != null && editor.text.isNotEmpty() && !editor.isOpen && editor.pendingTarget == null) {
                     OutlinedButton(
-                        onClick = { editor = editor.resume(ui.driveSnapshot.value.state); typedNotice = null },
+                        onClick = {
+                            val current = ui.driveSnapshot.value
+                            editor = editor.resume(current.state, current.invalidationGeneration)
+                            typedNotice = null
+                        },
                         enabled = !saving, modifier = Modifier.heightIn(min = 64.dp),
                     ) { Text(stringResource(R.string.memo_resume)) }
                 }
@@ -151,8 +156,16 @@ fun MemoryVaultScreen(
                     DayDraftState.Failed -> Text(stringResource(R.string.storage_unavailable))
                     is DayDraftState.Ready -> DayContent(
                         state.draft, editingEnabled = !saving,
-                        onAdd = { id -> editor = editor.openAdd(id, ui.driveSnapshot.value.state); typedNotice = null },
-                        onEdit = { note -> editor = editor.openEdit(note, ui.driveSnapshot.value.state); typedNotice = null },
+                        onAdd = { id ->
+                            val current = ui.driveSnapshot.value
+                            editor = editor.openAdd(id, current.state, current.invalidationGeneration)
+                            typedNotice = null
+                        },
+                        onEdit = { note ->
+                            val current = ui.driveSnapshot.value
+                            editor = editor.openEdit(note, current.state, current.invalidationGeneration)
+                            typedNotice = null
+                        },
                     )
                 }
             } else {
@@ -165,15 +178,18 @@ fun MemoryVaultScreen(
     }
 
     // Observed state gates rendering; callbacks read the current authoritative source again.
-    if (snapshot.state == DriveState.PARKED && editor.isOpen) {
+    if (snapshot.state == DriveState.PARKED && editor.isOpen && snapshot.invalidationGeneration == editor.openedGeneration) {
         AlertDialog(
-            onDismissRequest = { editor = editor.copy(isOpen = false); focus.clearFocus(force = true); keyboard?.hide() },
+            onDismissRequest = { editor = editor.close(); focus.clearFocus(force = true); keyboard?.hide() },
             title = { Text(stringResource(if (editor.noteId == null) R.string.memo_add else R.string.memo_edit)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(
                         value = editor.text,
-                        onValueChange = { editor = editor.changeText(it, ui.driveSnapshot.value.state) },
+                        onValueChange = {
+                            val current = ui.driveSnapshot.value
+                            editor = editor.changeText(it, current.state, current.invalidationGeneration)
+                        },
                         label = { Text(stringResource(R.string.memo_input_label)) },
                         enabled = !saving, minLines = 3, maxLines = 5,
                         textStyle = MaterialTheme.typography.bodyLarge,
@@ -192,7 +208,8 @@ fun MemoryVaultScreen(
                             saving = true
                             scope.launch {
                                 try {
-                                    val result = if (ui.driveSnapshot.value.state != DriveState.PARKED) TypedMemoResult.BLOCKED
+                                    val current = ui.driveSnapshot.value
+                                    val result = if (!submitted.canSubmit(current.state, current.invalidationGeneration)) TypedMemoResult.BLOCKED
                                     else submitted.noteId?.let { ui.updateTypedNote(it, submitted.text) }
                                         ?: ui.addTypedNote(visitId, submitted.text)
                                     typedNotice = result.textResource()
@@ -200,7 +217,10 @@ fun MemoryVaultScreen(
                                         editor = MemoEditorState()
                                         focus.clearFocus(force = true)
                                         keyboard?.hide()
-                                    } else editor = editor.onDriveChanged(ui.driveSnapshot.value.state)
+                                    } else {
+                                        val latest = ui.driveSnapshot.value
+                                        editor = editor.onDriveChanged(latest.state, latest.invalidationGeneration)
+                                    }
                                 } finally { saving = false }
                             }
                         }
@@ -209,9 +229,32 @@ fun MemoryVaultScreen(
             },
             dismissButton = {
                 OutlinedButton(
-                    onClick = { editor = editor.copy(isOpen = false); focus.clearFocus(force = true); keyboard?.hide() },
+                    onClick = { editor = editor.close(); focus.clearFocus(force = true); keyboard?.hide() },
                     enabled = !saving, modifier = Modifier.heightIn(min = 64.dp),
                 ) { Text(stringResource(R.string.memo_close)) }
+            },
+        )
+    }
+    if (snapshot.state == DriveState.PARKED && editor.pendingTarget != null && snapshot.invalidationGeneration == editor.openedGeneration) {
+        AlertDialog(
+            modifier = Modifier.testTag("discard-draft-confirmation"),
+            onDismissRequest = { editor = editor.cancelDiscard() },
+            title = { Text(stringResource(R.string.memo_discard_title)) },
+            text = { Text(stringResource(R.string.memo_discard_help)) },
+            confirmButton = {
+                Button(
+                    modifier = Modifier.heightIn(min = 64.dp),
+                    onClick = {
+                        val current = ui.driveSnapshot.value
+                        editor = editor.confirmDiscard(current.state, current.invalidationGeneration)
+                        typedNotice = null
+                    },
+                ) { Text(stringResource(R.string.memo_discard_confirm)) }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { editor = editor.cancelDiscard() }, modifier = Modifier.heightIn(min = 64.dp)) {
+                    Text(stringResource(R.string.memo_discard_cancel))
+                }
             },
         )
     }

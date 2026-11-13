@@ -45,6 +45,19 @@ class MemoEditorLifecycleObserverTest {
         assertEquals(1, inputClosures)
     }
 
+    @Test fun stoppingDiscardConfirmationPreservesOnlyTheOriginalDraft() {
+        val owner = Owner()
+        var editor = MemoEditorState(visitId = "v1", text = "원래 초안", openedGeneration = 3,
+            pendingTarget = MemoEditorTarget("v2"))
+        owner.registry.addObserver(MemoEditorLifecycleObserver({ editor }, { editor = it }, {}))
+        owner.registry.currentState = Lifecycle.State.RESUMED
+        owner.registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        assertNull(editor.pendingTarget)
+        assertEquals("v1", editor.visitId)
+        assertEquals("원래 초안", editor.text)
+        assertFalse(editor.isOpen)
+    }
+
     private class Owner : LifecycleOwner {
         val registry = LifecycleRegistry.createUnsafe(this)
         override val lifecycle: Lifecycle get() = registry

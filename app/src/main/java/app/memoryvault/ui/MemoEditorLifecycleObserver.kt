@@ -12,7 +12,7 @@ internal class MemoEditorLifecycleObserver(
 ) : LifecycleEventObserver {
     override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
         if (event == Lifecycle.Event.ON_STOP) {
-            updateEditor(currentEditor().copy(isOpen = false))
+            updateEditor(currentEditor().close())
             closeInput()
         }
     }
