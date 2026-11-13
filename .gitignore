@@ -1,0 +1,27 @@
+# Local credentials and environment configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+local.properties
+secrets.properties
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+*.pem
+
+# Local build outputs; inspect separately before any external distribution
+.gradle/
+**/build/
+*.apk
+*.aab
+
+# Local system metadata
+.DS_Store
+
+# Keep Android sources visible when a global ignore rule matches "main".
+!app/src/main/
+!app/src/main/**

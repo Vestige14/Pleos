@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">기억 저장소</string>
+    <string name="bootstrap_stage">1단계 · 초기 환경 확인</string>
+    <string name="bootstrap_running">앱 화면 실행 중</string>
+    <string name="speech_pending">음성 인식: 미연동 · 2단계에서 확인</string>
+    <string name="vehicle_pending">차량 상태: 미연동 · 2단계에서 확인</string>
+    <string name="features_pending">방문 · 메모 · 사진 · 공유: 아직 구현하지 않음</string>
+    <string name="demo_reference">데모 기준일 %1$s · %2$s</string>
+    <string name="bootstrap_notice">이 화면은 개발 환경 확인용입니다. 음성 인식과 차량 연결 성공을 의미하지 않습니다.</string>
+</resources>
