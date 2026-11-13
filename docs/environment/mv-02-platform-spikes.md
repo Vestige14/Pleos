@@ -80,6 +80,17 @@ DO Activity를 같은 task에서 열기, Back, NEW_TASK|CLEAR_TASK로 별도 roo
 
 [Pleos 주행 규제 개발 가이드](https://document.pleos.ai/en/docs/pleos-only/vehicle-app-developer-guide/driving-restriction-development-guide)는 DO 선언 앱도 CarUxRestrictions/ActiveRestrictions에 따라 기능 제한을 직접 적용하도록 요구한다. 주차 중 오프라인 한국어 STT 성공은 확인했지만 **필수 F2 주행 음성 경로와 DDS 원천 단절 시 UNKNOWN 계약은 미해결**이다. OS overlay를 받아들이는 것만으로 이 필수 조건을 통과시키거나 typed input으로 대체하지 않는다. 이후 구현 전에 메인이 확인 가능한 플랫폼 경로와 승인 경계를 판단해야 한다.
 
+## 2026-11-14 공식 한국어 문서 추가 확인
+
+사용자가 제공한 [앱 개발 시작하기](https://document.pleos.ai/docs/pleos-only/getting-started)에서 SDK·주행 규제·테스트 문서를 따라 확인했다. 이 조사는 문서 확인이며 위 기기 실측을 재실행한 결과가 아니다.
+
+- [디버깅 ADB FAQ](https://document.pleos.ai/docs/pleos-only/vehicle-app-developer-guide/adb-command-reference-guide)는 `hmg_car_service`의 `drivingstate driving_regulation on/off`를 공식 개발 명령으로 공개한다. 따라서 공식 시험 도구가 없다고 표현하면 부정확하다. 다만 OFF는 주행 규제를 해제하는 기능으로, 신뢰 설치 출처나 DO 승인을 설정하는 절차는 아니다. OFF 상태에서 화면이 보여도 규제 ON 상태의 주행 음성 수락 기준을 통과한 증거가 되지 않는다. 이번 조사에서는 실행하지 않았다.
+- [Vehicle SDK Sample](https://document.pleos.ai/docs/pleos-only/tutorial/vehicle-sdk-sample-app)은 `SDK initialized` 표시가 초기화 호출의 예외 없는 반환을 뜻할 뿐, Vehicle Service 연결 완료나 개별 기능 가용성의 판단 기준이 아니라고 명시한다. 시작 가이드의 SDK 2.3.1과 Sample의 2.3.2/Service 2.3.22 차이를 문제 해결 버전의 증거로 간주하지 않는다.
+- [Virtual Console 안내](https://document.pleos.ai/docs/pleos-only/app-test-guide/virtual-console-guide)는 도메인별 차량 상태·이벤트 시험을 설명하지만, 브라우저 세션 종료를 실차 원천 단절 주입으로 정의하지 않는다. 따라서 과거 DDS inactive 관측을 물리적 차량 단절과 동일시하지 않는다. 현재 앱 입력으로 그 콘솔 상태를 구분할 수 없었다는 관측은 유효하다.
+- [API 호환성·가용성 안내](https://document.pleos.ai/docs/pleos-only/vehicle-app-planning-guide/api-compatibility-availability)는 실제 지원·접근 권한을 확인하고, 특별 property가 필요하면 기술지원 검토를 받도록 안내한다. 지금 필요한 것은 규제 ON에서 비시스템 개발 앱을 시험하는 지원 설치/이미지와, 원천 신뢰 상실의 의미·감지 지연·앱 통지·단절 시험 방법에 관한 계약이다. 업체에 연락하거나 앱을 제출하지 않았다.
+
+공개 문서에서 이 두 선행조건을 해결하는 경로는 아직 확보하지 못했다. 일부 API Reference 상세 본문은 웹 도구로 추출되지 않았으므로, 가능한 모든 API가 없다고 단정하지 않는다. 순수 안전 정책과 음성 세션 코어의 테스트를 실제 차량 연동·주행 화면 검증으로 확대하지 않는다.
+
 ## 원문 로그 보호
 
 원본 SDK의 `SttCallback.onResponse(type,data)`는 data 문자열을 vendor Log로 전달했고, 결과 dispatch에도 vendor 로그가 있었다. `utils.Log`의 네 void 메서드 `a/b/c/d(String,String)`를 모두 bytecode로 읽었다. 역할은 인자 검사·로그 문자열 구성·Android Log 호출뿐이었다.
