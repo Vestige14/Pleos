@@ -2,9 +2,16 @@ package app.memoryvault.domain
 
 import app.memoryvault.platform.SpeechEvent
 import app.memoryvault.platform.SpeechInput
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
@@ -566,6 +573,109 @@ class VoiceMemoUseCaseTest {
             assertThrows(IllegalArgumentException::class.java) {
                 VoiceMemoUseCase(drive, store::save, captureTimeoutMs = capture, finalTimeoutMs = final)
             }
+        }
+    }
+
+    // Exercises the production primitive used by record/cancel, not a copied algorithm.
+    // A shared start flag aligns real threads after the barrier. The old code can read
+    // job=null, attach can publish the job and see no reason, then cancel can publish
+    // its reason while still holding its stale null job. There is no sleep or product hook.
+    @Test(timeout = 30_000L)
+    fun sessionCancellationRacingAttachment_isDeliveredToTheActualWorkJob() {
+        val rounds = 100_000
+        val barrier = CyclicBarrier(3)
+        val current = AtomicReference<SessionRace>()
+        val workers = Executors.newFixedThreadPool(2)
+        val attach = workers.submit {
+            repeat(rounds) {
+                barrier.await(5, TimeUnit.SECONDS)
+                val race = current.get()
+                race.ready.incrementAndGet()
+                spinUntil { race.start.get() }
+                race.session.attach(race.work)
+                barrier.await(5, TimeUnit.SECONDS)
+            }
+        }
+        val cancel = workers.submit {
+            repeat(rounds) {
+                barrier.await(5, TimeUnit.SECONDS)
+                val race = current.get()
+                race.ready.incrementAndGet()
+                spinUntil { race.start.get() }
+                race.session.cancel(VoiceCancelReason.USER)
+                barrier.await(5, TimeUnit.SECONDS)
+            }
+        }
+        var lost = 0
+        try {
+            repeat(rounds) {
+                val race = SessionRace()
+                current.set(race)
+                barrier.await(5, TimeUnit.SECONDS)
+                spinUntil { race.ready.get() == 2 }
+                race.start.set(true)
+                barrier.await(5, TimeUnit.SECONDS)
+                if (!race.work.isCancelled) lost++
+                race.work.cancel()
+            }
+            attach.get(5, TimeUnit.SECONDS)
+            cancel.get(5, TimeUnit.SECONDS)
+            assertEquals("Lost cancellations in $rounds real attach/cancel races", 0, lost)
+        } finally {
+            workers.shutdownNow()
+            assertTrue("Race workers must stop", workers.awaitTermination(5, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test fun sessionCancelBeforeAttach_deliversTheFirstReasonWhenTheJobArrives() {
+        val session = VoiceMemoSession()
+        val work = Job()
+        var cancellation: Throwable? = null
+        work.invokeOnCompletion { cancellation = it }
+        session.cancel(VoiceCancelReason.USER)
+        session.cancel(VoiceCancelReason.UNKNOWN)
+        session.attach(work)
+        assertTrue(work.isCancelled)
+        assertEquals(VoiceCancelReason.USER, (cancellation as VoiceSessionCancellation).reason)
+    }
+
+    @Test fun sessionAttachBeforeCancel_deliversTheFirstReasonToTheJob() {
+        val session = VoiceMemoSession()
+        val work = Job()
+        var cancellation: Throwable? = null
+        work.invokeOnCompletion { cancellation = it }
+        session.attach(work)
+        session.cancel(VoiceCancelReason.UNKNOWN)
+        session.cancel(VoiceCancelReason.USER)
+        assertTrue(work.isCancelled)
+        assertEquals(VoiceCancelReason.UNKNOWN, (cancellation as VoiceSessionCancellation).reason)
+    }
+
+    @Test fun sessionCancellationAfterCompletedWork_doesNotTurnCompletionIntoCancellation() {
+        val session = VoiceMemoSession()
+        val work = Job()
+        session.attach(work)
+        work.complete()
+        session.cancel(VoiceCancelReason.USER)
+        session.cancel(VoiceCancelReason.UNKNOWN)
+        assertTrue(work.isCompleted)
+        assertFalse(work.isCancelled)
+    }
+
+    private class SessionRace {
+        val session = VoiceMemoSession()
+        val work = Job()
+        val ready = AtomicInteger(0)
+        val start = AtomicBoolean(false)
+    }
+
+    private fun spinUntil(condition: () -> Boolean) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (!condition()) {
+            check(!Thread.currentThread().isInterrupted && System.nanoTime() < deadline) {
+                "Race rendezvous failed to make progress"
+            }
+            Thread.onSpinWait()
         }
     }
 

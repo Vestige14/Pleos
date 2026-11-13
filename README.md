@@ -20,7 +20,7 @@ printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
 ./gradlew --no-daemon --console=plain assembleDebug lintDebug testDebugUnitTest
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`. 최초 실행에는 공개 의존성 다운로드가 필요합니다. 3B 추가 후 메인이 실행한 검증 결과는 JVM 단위 테스트 **44/44**, Lint **오류 0건·경고 13건**입니다. 실제 Room 테스트 **27/27**도 새 전용 AVD에서 통과했습니다. 재현 시에는 별도로 실행하며, 테스트 APK 준비와 명령은 [코어 검증 재현](docs/development-status.md#코어-검증-재현)을 따릅니다.
+APK: `app/build/outputs/apk/debug/app-debug.apk`. 최초 실행에는 공개 의존성 다운로드가 필요합니다. 3B 추가 후 메인이 실행한 검증 결과는 JVM 단위 테스트 **48/48**, Lint **오류 0건·경고 13건**입니다. 실제 Room 테스트 **27/27**도 새 전용 AVD에서 통과했습니다. 재현 시에는 별도로 실행하며, 테스트 APK 준비와 명령은 [코어 검증 재현](docs/development-status.md#코어-검증-재현)을 따릅니다.
 
 ## 새 AVD에서 확인
 

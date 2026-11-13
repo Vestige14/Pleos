@@ -69,7 +69,7 @@ class VoiceMemoUseCase(
         require(finalTimeoutMs > captureTimeoutMs) { "Final deadline must follow capture timeout" }
     }
 
-    private val active = AtomicReference<Session?>(null)
+    private val active = AtomicReference<VoiceMemoSession?>(null)
     private val mutableState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val state: StateFlow<VoiceState> = mutableState.asStateFlow()
 
@@ -77,7 +77,7 @@ class VoiceMemoUseCase(
     suspend fun record(sessionId: String, capturedAt: Long, input: SpeechInput): VoiceMemoOutcome {
         require(sessionId.isNotBlank()) { "Voice session ID is blank" }
         currentCoroutineContext().ensureActive()
-        val session = Session()
+        val session = VoiceMemoSession()
         if (!active.compareAndSet(null, session)) return VoiceMemoOutcome.Busy
         if (!DrivePolicy.canStartVoice(driveState.value)) {
             active.compareAndSet(session, null)
@@ -116,7 +116,7 @@ class VoiceMemoUseCase(
     }
 
     private suspend fun runSession(
-        session: Session,
+        session: VoiceMemoSession,
         sessionId: String,
         capturedAt: Long,
         input: SpeechInput,
@@ -151,7 +151,7 @@ class VoiceMemoUseCase(
             } catch (cancelled: CancellationException) {
                 // Caller cancellation always stays cancellation, even if a session cancel raced it.
                 currentCoroutineContext().ensureActive()
-                if (cancelled is SessionCancellation) {
+                if (cancelled is VoiceSessionCancellation) {
                     VoiceMemoOutcome.Cancelled(cancelled.reason)
                 } else {
                     throw cancelled
@@ -162,7 +162,7 @@ class VoiceMemoUseCase(
         }
     }
 
-    private suspend fun checkCancellation(session: Session) {
+    private suspend fun checkCancellation(session: VoiceMemoSession) {
         if (driveState.value == DriveState.UNKNOWN) session.cancel(VoiceCancelReason.UNKNOWN)
         currentCoroutineContext().ensureActive()
     }
@@ -237,23 +237,6 @@ class VoiceMemoUseCase(
         VoiceMemoOutcome.Blocked, VoiceMemoOutcome.Busy -> this
     }
 
-    private class Session {
-        private val job = AtomicReference<Job?>(null)
-        private val cancellation = AtomicReference<VoiceCancelReason?>(null)
-
-        fun attach(work: Job) {
-            job.set(work)
-            cancellation.get()?.let { work.cancel(SessionCancellation(it)) }
-        }
-
-        fun cancel(reason: VoiceCancelReason) {
-            val work = job.get()
-            if (work?.isCompleted == true) return
-            if (cancellation.compareAndSet(null, reason)) work?.cancel(SessionCancellation(reason))
-        }
-    }
-
-    private class SessionCancellation(val reason: VoiceCancelReason) : CancellationException("Voice session cancelled")
     private class CaptureFailure : Exception()
     private data class Cleanup(val failed: Boolean, val propagate: Throwable?)
     private sealed interface Recognition {
@@ -261,3 +244,30 @@ class VoiceMemoUseCase(
         data class Unsuccessful(val outcome: VoiceMemoOutcome) : Recognition
     }
 }
+
+internal class VoiceMemoSession {
+    private val lock = Any()
+    private var job: Job? = null
+    private var cancellation: VoiceCancelReason? = null
+
+    fun attach(work: Job) {
+        val reason = synchronized(lock) {
+            job = work
+            cancellation
+        }
+        reason?.let { work.cancel(VoiceSessionCancellation(it)) }
+    }
+
+    fun cancel(reason: VoiceCancelReason) {
+        val work = synchronized(lock) {
+            if (job?.isCompleted == true || cancellation != null) return
+            cancellation = reason
+            job
+        }
+        // The lock hands off either the job or its first reason. Invoke external Job
+        // cancellation outside the lock so completion callbacks cannot hold the handoff.
+        work?.cancel(VoiceSessionCancellation(reason))
+    }
+}
+
+internal class VoiceSessionCancellation(val reason: VoiceCancelReason) : CancellationException("Voice session cancelled")
