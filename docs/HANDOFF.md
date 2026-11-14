@@ -1,5 +1,12 @@
 # 다음 개발자·에이전트를 위한 인수인계
 
+## 2026-11-15 현재 작업 — 7단계 병렬 구현 승인
+
+사용자는 [7단계 설계](superpowers/specs/2026-11-15-stage7-memory-links-design.md)와 [공유 계약](superpowers/specs/2026-11-15-stage7-memory-contract.md)에 기록한 사진 단독 분석/시간 근거 기반 기억 연결을 승인하고 개발 시작을 지시했다. 기준 main은259cb9a다. [실행 계획](superpowers/plans/2026-11-15-stage7-memory-links.md)에 따라 A API/B Pleos내비/C Android저장·검토를 서로 다른 worktree에서 병렬 구현한다. UI 다듬기/Stage8/새push는 범위 밖이다.
+
+최신 추가 정정: 작업물이 나온 뒤 독립 검증 작업자 V 한 명이 모든 빌드·시험·코드검토·기기/API·통합 검증을 전담한다. 구현자/root는 같은검사를 중복하지 않는다. 이번 단계의 구현자TDD/각단계전체시험/중복reviewer 기본 규칙보다 이 지시가 우선한다. 구현자는 NOT_RUN_BY_DESIGN으로 보고하고 V가 필수사례를 검사한다. 실패수정은 원작성자, 영향범위재검사는 V만 한다. 기존 무음SDK실패와 검증 한계를 지우지 않는다.
+
+
 ## 2026-11-15 최신 수락 — 5·6단계 통합본 main 게시
 
 공유·AI 동기화·원음/STT/선택적 위치 저장의 로컬 통합 수락을 마쳤다. 전체 변경 독립 검토는 Approved, 마지막 문서 M1은 scoped 재검토에서 ADDRESSED이며 새 Critical/Important/Minor는 없다. 사용자는 이번 통합본을 main에 반영하고 origin/main으로 push하도록 명시적으로 승인했다. 게시 대상은 `feature/05-06-integration`의 검토된 128개 변경 경로이며, 원격은 `https://github.com/chowonbhin/Pleos.git`이다. 릴리즈/태그는 만들지 않는다. 실제 원격 반영 여부는 최종 Git ref 비교와 push 결과를 기준으로 한다.
