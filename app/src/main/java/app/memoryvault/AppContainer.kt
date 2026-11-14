@@ -1,9 +1,14 @@
 package app.memoryvault
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.util.Size
+import androidx.core.net.toUri
 import androidx.room.Room
 import app.memoryvault.data.AppDatabase
 import app.memoryvault.data.MemoryRepository
+import app.memoryvault.data.MediaStorePhotoSource
+import app.memoryvault.data.LinkState
 import app.memoryvault.data.NoteKind
 import app.memoryvault.data.SeedLoader
 import app.memoryvault.domain.DriveState
@@ -11,6 +16,8 @@ import app.memoryvault.domain.VoiceMemoUseCase
 import app.memoryvault.platform.AaosDriveStateSource
 import app.memoryvault.platform.PleosSpeechInput
 import app.memoryvault.platform.DriveSafetyBridge
+import app.memoryvault.platform.readPhotoPermissions
+import app.memoryvault.platform.AndroidPhotoThumbnailRequest
 import app.memoryvault.service.ReadyNotificationPolicy
 import app.memoryvault.service.StorageReadiness
 import app.memoryvault.service.VoiceNotifications
@@ -18,6 +25,9 @@ import app.memoryvault.service.VoiceServiceState
 import app.memoryvault.service.VoiceSessionController
 import app.memoryvault.ui.TypedMemoStore
 import app.memoryvault.ui.TypedMemoWriter
+import app.memoryvault.ui.PhotoReviewController
+import app.memoryvault.ui.PhotoReviewStore
+import app.memoryvault.ui.PhotoThumbnailEpoch
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -77,9 +87,12 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
     val voiceState = mutableVoiceState.asStateFlow()
 
     private val startup = RepositoryStartup {
-        val database = Room.databaseBuilder(appContext, AppDatabase::class.java, "memory-vault.db").build()
+        val database = Room.databaseBuilder(appContext, AppDatabase::class.java, "memory-vault.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2).build()
         try {
-            val result = MemoryRepository(database)
+            val result = MemoryRepository(database, MediaStorePhotoSource(appContext) {
+                driveSnapshot.value.state == DriveState.PARKED
+            })
             val seed = appContext.assets.open("seed_day.json").bufferedReader().use { SeedLoader.parse(it.readText()) }
             result.seedIfEmpty(seed)
             result
@@ -104,11 +117,22 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
         val ready = repository.value as? RepositoryState.Ready ?: error("Storage unavailable")
         ready.repository.saveVoiceMemo(id, text, capturedAt)
     }, driveSafety = driveSafety)
+    private val photos = PhotoReviewController(driveSnapshot, { readPhotoPermissions(appContext) }, {
+        (repository.value as? RepositoryState.Ready)?.repository?.let { ready ->
+            object : PhotoReviewStore {
+                override suspend fun sync(canApply: () -> Boolean) = ready.syncPhotos(DemoConfig.DEMO_DATE.toString(), canApply)
+                override suspend fun decide(uri: String, state: LinkState, canApply: () -> Boolean) =
+                    ready.setPhotoState(uri, state, canApply)
+            }
+        }
+    }, scope)
+    val photoReview = photos.state
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) { startup.initialize() }
         driveSource.start()
+        scope.launch { repository.collect { if (it is RepositoryState.Ready) photos.onStorageReady() } }
         scope.launch {
             combine(readyNotificationEnabled, driveState, voiceState) { _, _, _ -> Unit }.collect {
                 refreshReadyNotification()
@@ -134,6 +158,16 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
     suspend fun addTypedNote(visitId: String, text: String): TypedMemoResult = typed.add(visitId, text)
 
     suspend fun updateTypedNote(noteId: Long, text: String): TypedMemoResult = typed.update(noteId, text)
+
+    fun onPhotoResume() = photos.onResume()
+    fun onPhotoStop() = photos.onStop()
+    fun refreshPhotos() = photos.refresh()
+    suspend fun setPhotoState(uri: String, state: LinkState) = photos.decide(uri, state)
+    fun thumbnailAllowed(epoch: PhotoThumbnailEpoch) = photos.thumbnailAllowed(epoch)
+    suspend fun loadPhotoThumbnail(uri: String, epoch: PhotoThumbnailEpoch): Bitmap? =
+        photos.loadThumbnail(epoch, AndroidPhotoThumbnailRequest { signal ->
+            appContext.contentResolver.loadThumbnail(uri.toUri(), Size(400, 300), signal)
+        })
 
     /** Explicit retry after external vehicle-permission setup; never fabricates readiness. */
     fun retryVehicleConnection() { driveSource.start() }

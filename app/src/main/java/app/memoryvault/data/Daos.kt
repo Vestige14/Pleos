@@ -17,12 +17,21 @@ interface VisitDao {
 
     @Query("SELECT * FROM visits WHERE date = :date ORDER BY arrivedAt, id")
     suspend fun getDay(date: String): List<Visit>
+
+    @Query("SELECT * FROM visits ORDER BY arrivedAt, id")
+    suspend fun getAll(): List<Visit>
 }
 
 @Dao
 interface PhotoDao {
     @Upsert
     suspend fun upsert(photos: List<Photo>)
+
+    @Query("SELECT * FROM photos WHERE uri = :uri")
+    suspend fun get(uri: String): Photo?
+
+    @Query("SELECT * FROM photos ORDER BY takenAt, uri")
+    suspend fun getAll(): List<Photo>
 
     @Query("SELECT * FROM photos ORDER BY takenAt, uri")
     fun observeAll(): Flow<List<Photo>>

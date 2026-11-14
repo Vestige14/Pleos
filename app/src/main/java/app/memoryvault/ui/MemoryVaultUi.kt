@@ -5,10 +5,13 @@ import app.memoryvault.DemoConfig
 import app.memoryvault.RepositoryState
 import app.memoryvault.TypedMemoResult
 import app.memoryvault.data.DayDraft
+import app.memoryvault.data.LinkState
 import app.memoryvault.platform.DriveSnapshot
 import app.memoryvault.service.VoiceMemoService
 import app.memoryvault.service.VoiceServiceState
 import app.memoryvault.service.VoiceStartRequest
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +32,11 @@ interface MemoryVaultUi {
     val day: Flow<DayDraftState>
     val voiceState: StateFlow<VoiceServiceState>
     val readyNotificationEnabled: StateFlow<Boolean>
+    val photoReview: StateFlow<PhotoReviewState>
+    fun thumbnailAllowed(epoch: PhotoThumbnailEpoch): Boolean
+    suspend fun loadPhotoThumbnail(uri: String, epoch: PhotoThumbnailEpoch): ImageBitmap?
+    fun refreshPhotos()
+    suspend fun setPhotoState(uri: String, state: LinkState): PhotoReviewResult
     suspend fun addTypedNote(visitId: String, text: String): TypedMemoResult
     suspend fun updateTypedNote(noteId: Long, text: String): TypedMemoResult
     fun setReadyNotificationEnabled(enabled: Boolean): Boolean
@@ -45,6 +53,12 @@ class AppUiBridge(
     override val driveSnapshot = container.driveSnapshot
     override val voiceState = container.voiceState
     override val readyNotificationEnabled = container.readyNotificationEnabled
+    override val photoReview = container.photoReview
+    override fun thumbnailAllowed(epoch: PhotoThumbnailEpoch) = container.thumbnailAllowed(epoch)
+    override suspend fun loadPhotoThumbnail(uri: String, epoch: PhotoThumbnailEpoch): ImageBitmap? =
+        container.loadPhotoThumbnail(uri, epoch)?.asImageBitmap()
+    override fun refreshPhotos() = container.refreshPhotos()
+    override suspend fun setPhotoState(uri: String, state: LinkState) = container.setPhotoState(uri, state)
     override val day: Flow<DayDraftState> = container.repository.flatMapLatest { state ->
         when (state) {
             RepositoryState.Loading -> flowOf(DayDraftState.Loading)

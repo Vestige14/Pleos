@@ -1,4 +1,4 @@
-# 3단계 체크포인트 테스트 안내
+# 기억 저장소 체크포인트 테스트 안내
 
 이 문서는 다음 담당자가 **현재 소스와 자기 전용 Pleos AVD**에서 빌드·자동 검사·실제 기능을 확인하는 절차입니다. 환경 준비는 [SETUP](SETUP.md), 기준 소스와 기존 결과는 [HANDOFF](HANDOFF.md)를 먼저 읽습니다. 현재 정상 녹음 진입은 **일반 앱 목록→녹음 전용 화면→창 막대 분할**입니다. 알림센터 자체는 [이슈 #1](https://github.com/chowonbhin/Pleos/issues/1)로 남으며 이 경로와 구분합니다. 최종 수락 상태는 HANDOFF에서 확인합니다.
 
@@ -22,7 +22,7 @@ git status --short
 프로젝트 루트에서 실행합니다. 의존성이 준비된 환경에서만 `--offline`을 추가할 수 있습니다.
 
 ```sh
-./gradlew --no-daemon --console=plain testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+./gradlew --no-daemon --max-workers=1 --console=plain testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 ```
 
 Gradle 종료 코드와 `BUILD SUCCESSFUL`을 확인하고 다음 결과를 읽습니다.
@@ -52,7 +52,7 @@ SETUP의 설치 절차로 제품과 테스트 APK를 동일 전용 기기·현�
   app.memoryvault.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-현재 테스트 소스는 **Room 27개 + 기존 Compose 7개 + 녹음 패널 8개 + Activity 진입 1개 = 43개**입니다. `OK (43 tests)`와 개별 실패 유무를 확인합니다. `am instrument`의 셸 종료 코드나 마지막 `INSTRUMENTATION_CODE` 하나로 성공을 판정하지 않습니다. 테스트는 in-memory DB 또는 테스트가 만든 UUID 파일 DB를 사용하며 제품의 저장 메모를 지우는 검사가 아닙니다. 실제 STT 마이크를 자동으로 시작하지 않습니다.
+현재 사진 브랜치의 테스트는 **기존43개 + 사진22개 = 65개**입니다. `OK (65 tests)`와 개별 실패 유무를 확인합니다. `am instrument`의 셸 종료 코드나 마지막 `INSTRUMENTATION_CODE` 하나로 성공을 판정하지 않습니다. 테스트는 in-memory DB 또는 테스트가 만든 UUID 파일 DB를 사용하며 제품의 저장 메모를 지우는 검사가 아닙니다. 실제 STT 마이크를 자동으로 시작하지 않습니다.
 
 변경 영향이 UI에 한정되면 다음처럼 관련 그룹을 실행할 수 있습니다. 전체 수락 검사를 대체할 때는 해당 경계의 필수 검사 범위를 먼저 확인합니다.
 
@@ -62,7 +62,7 @@ SETUP의 설치 절차로 제품과 테스트 APK를 동일 전용 기기·현�
   app.memoryvault.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-실패하면 실패 메서드·지점과 당시 P/Activity 상태를 먼저 확인합니다. 기존 시험에서 한 번 발생한 초기 편집기 노드 부재는 후속 단독·그룹·전체 실행에서 재현되지 않았지만 원인이 확정된 것은 아닙니다. 재발 시 관련 검사만 분리하고 첫 클릭 직후의 UI·lifecycle을 좁게 관측합니다. 무작정 전체 검사를 반복하거나 안전 gate를 완화하지 않습니다.
+실패하면 실패 메서드·지점과 당시 P/Activity 상태를 먼저 확인합니다. 현재 기존 UI 검사의 노드 부재·NoRoot·idle timeout 및 ActivityScenario lifecycle 실패가 회차마다 다른 위치에서 재발합니다. [이슈 #2](https://github.com/chowonbhin/Pleos/issues/2)에 조사 지점과 사진 전용65개 실행 결과를 기록했으며, 사용자 승인으로 이번 게시 차단 조건에서 제외했습니다. 원인 해결이나 전체 GREEN을 뜻하지 않습니다. 재발 시 관련 검사만 분리하고 첫 클릭 직후의 UI·lifecycle을 좁게 관측합니다. 무작정 전체 검사를 반복하거나 안전 gate를 완화하지 않습니다.
 
 ## 4. 공식 콘솔과 최초 권한 준비
 
@@ -190,4 +190,13 @@ SETUP의 설치 절차로 제품과 테스트 APK를 동일 전용 기기·현�
 - 소스 커밋·APK 해시·기기와 자동 검사 수/실패, 실제로 확인한 동작 및 미검증 범위를 기록했는가?
 - 3단계 차단 사항과 다음 첫 작업을 HANDOFF에 반영했는가?
 
-원문은 사용자가 화면에서 확인하고, 보고에는 일치 확인 여부만 남깁니다. 키·서명 자격증명·사용자 원문·광범위 시스템 로그를 GitHub 이슈나 제출 자료에 올리지 않습니다. 사진·공유·실제 OpenAI는 현재 검사 대상 기능으로 표시하지 않습니다.
+원문은 사용자가 화면에서 확인하고, 보고에는 일치 확인 여부만 남깁니다. 키·서명 자격증명·사용자 원문·광범위 시스템 로그를 GitHub 이슈나 제출 자료에 올리지 않습니다. 위 3단계 음성 절차는 사진·공유·실제 OpenAI 검증을 대신하지 않습니다. 현재 사진 검증은 아래 10절을 따릅니다.
+
+
+## 10. 4단계 사진 검증과 알려진 UI 실패
+
+전체 사진 허용·거부·철회·재부여와 후보/확정/해제/재실행/D·UNKNOWN 경로는 [사진 기능 안내](features/photo-linking.md)를 따른다. 사용자 결정에 따라 선택 사진/GPS 독립 권한 조합은 이번 수락 범위에서 제외하며 실제 미검증으로 표시한다.
+
+기존 UI 간헐 실패는 [이슈 #2](https://github.com/chowonbhin/Pleos/issues/2)에 재현 환경·확인할 코드 행·증상별 증거를 기록했다. 사용자는 이 이슈를 열린 상태로 유지한 채 4단계 feature와 main 게시를 승인했다. 전체 검사는 그대로 실행하고 실패를 삭제/skip/자동 retry로 감추지 않는다. 다른 새 결함까지 면제된 것은 아니다. 임시 진단 코드는 게시하지 않는다.
+
+이전 병렬 준비물 포함 전체78개 회차와 사진 전용65개를 구분한다. 합성 사진·공유 PNG·실제 음성 시험의 산출물을 혼동하지 않으며, 이번 사진 게시에는 공유/백엔드 코드가 포함되지 않는다.

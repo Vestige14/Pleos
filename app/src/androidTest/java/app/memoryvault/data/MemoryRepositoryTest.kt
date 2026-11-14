@@ -20,7 +20,7 @@ class MemoryRepositoryTest {
         db = Room.inMemoryDatabaseBuilder(
             InstrumentationRegistry.getInstrumentation().targetContext, AppDatabase::class.java,
         ).build()
-        repository = MemoryRepository(db, PhotoSource { emptyList() })
+        repository = MemoryRepository(db, PhotoSource { PhotoScan(emptyList()) })
     }
 
     @After fun tearDown() = db.close()

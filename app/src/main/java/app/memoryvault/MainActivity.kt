@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.memoryvault.domain.DriveState
+import app.memoryvault.platform.PhotoPermissionPolicy
 import app.memoryvault.service.VoiceMemoService
 import app.memoryvault.ui.AppUiBridge
 import app.memoryvault.ui.MemoryVaultScreen
@@ -23,13 +24,17 @@ class MainActivity : ComponentActivity() {
         refreshPermissionSummary()
         container.refreshReadyNotification()
     }
+    private val photoPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        container.refreshPhotos()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val ui = AppUiBridge(container) { VoiceMemoService.requestStart(this) }
         setContent {
             MemoryVaultTheme {
-                MemoryVaultScreen(ui, onRequestPermissions = ::requestVoicePermissions, permissionSummary = permissionSummary)
+                MemoryVaultScreen(ui, onRequestPermissions = ::requestVoicePermissions, permissionSummary = permissionSummary,
+                    onRequestPhotoPermissions = ::requestPhotoPermissions)
             }
         }
     }
@@ -37,7 +42,19 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshPermissionSummary()
+        container.onPhotoResume()
         container.retryVehicleConnection()
+    }
+
+    override fun onStop() {
+        container.onPhotoStop()
+        super.onStop()
+    }
+
+    private fun requestPhotoPermissions() {
+        if (container.driveSnapshot.value.state != DriveState.PARKED) return
+        // Request the read, re-selection and location grants together. Never request on launch.
+        photoPermissions.launch(PhotoPermissionPolicy.requestPermissions(Build.VERSION.SDK_INT).toTypedArray())
     }
 
     private fun requestVoicePermissions() {

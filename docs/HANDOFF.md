@@ -1,5 +1,27 @@
 # 다음 개발자·에이전트를 위한 인수인계
 
+## 4단계 사진 연결 게시 — 2026-11-14 최신 결정
+
+사진 읽기·시간/위치 후보·확정/해제·권한 처리·주차 UI를 구현하고 task 독립 수정 검토를 마쳤습니다. 사용자 결정에 따라 **전체 사진 허용을 기준으로 4단계를 마무리**하며, 기존 UI 자동 검사의 간헐 실패는 [이슈 #2](https://github.com/chowonbhin/Pleos/issues/2)로 열어 두고 게시합니다. 해당 실패를 해결했다고 주장하지 않습니다. 선택 사진/GPS만 독립 변경하는 실제 OS 조합은 이번 수락 범위에서 제외했으며 미검증으로 남깁니다.
+
+이 브랜치는 `feature/photo-linking`, 기준 main은 `21cbd4cb0dd83bfbb2519fd5aaba621b32ad5a5f`입니다. 공유 PNG·백엔드 등 5·6단계 준비물은 별도 작업 공간에 보존하고 이번 변경에 포함하지 않습니다. 사용자가 **feature push → 로컬 main 병합·검증 → origin/main 최신화**를 승인했습니다. 최종 게시 여부는 실제 Git refs로 확인합니다. 이번 사진 게시 커밋에는 릴리즈·태그·5단계 추가 구현을 포함하지 않습니다. 후속 실행 지시는 아래 최신 절을 따릅니다.
+
+새 기능의 실행·수락 범위는 [사진 기능 안내](features/photo-linking.md), 일반 시험 명령은 [TESTING](TESTING.md), 승인·검토·게시 순서는 [게시 계획](superpowers/plans/2026-11-14-photo-linking-publication.md)에 있습니다. 아래 3단계의 ‘4단계 미착수/진행하지 않음’ 문장은 당시 이력이며 이 최신 지시로 대체됐습니다.
+
+### 사진 전용 최종 검증
+
+- `testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest --max-workers=1`: 성공. JVM 178개 통과, Lint 오류 0·경고 28·hint 1. 제품·시험 APK 빌드 성공.
+- 전용 Pleos API34(user 10) 전체 기기 검사: 65메서드, **61성공·4실패 메서드/5실패 이벤트**, 79.302초. 사진 관련 새 검사 22개는 통과했다. 기존 MemoryVaultScreenTest의 pendingVoice…, anotherTarget…, savedStateRestoration…, stoppedParked…에서 NoRoot/ActivityScenario STARTED lifecycle 문제가 발생했다. 한 메서드의 본문·정리 실패가 중복 집계돼 JUnit 요약은 `Failures: 5`다. 전체 GREEN으로 해석하지 않는다. [이슈 #2](https://github.com/chowonbhin/Pleos/issues/2)의 후속 범위로 기록한다.
+- 제품 APK SHA-256: `5168e87c1b63ddc5bc141aad271eb03891fe3d377d2151197313681fba0f5e94`. 시험 APK: `9f7e59c8f444e26bf41b0fd057f55d143b4f0b2ea2f3a131c9116e9aa9514c7d`. 같은 기존 서명으로 데이터 보존 설치했다.
+- 해당 제품 APK DEX 3개·SDK class 109개: vendor logger 0, SDK caller Android log 0, 결과 callback 1. 실제 마이크/OpenAI 호출은 하지 않았다.
+- 기존 사진37파일 독립 fix1 검토 Approved; 동결44파일 최종 독립 검토는 Ready to merge Yes, 새 Critical/Important 0이었다. 문서 Minor M1의 낡은 SETUP/TESTING 안내를 정리했으며 제품 소스는 그대로다. main 병합 후 검증은 게시 절차에서 별도로 확인한다. 기기 수락의 실제 전체 사진 흐름·한계는 [사진 안내](features/photo-linking.md)에 기록했다.
+
+### 2026-11-14 후속 실행 지시
+
+사용자는 오늘 UI 수정 이후 7·8단계까지 완성해 데모 촬영을 시도하도록 후속 진행을 지시했다. 이번 4단계 게시 뒤 **5단계 공유 → 전체 UI 다듬기 → 6단계 OpenAI 동기화 → 7단계 사용자 검토 → 8단계 통합·촬영 준비** 순서로 이어 간다. 기존 단계별 중단 기록은 이 후속 지시 범위에서 대체되며 단계별 결과·한계는 계속 보고한다. 공유/백엔드 사전 구현은 보존된 작업 공간에서 검토 근거와 함께 가져온다. 막히는 문제는 영향·재현·코드 위치를 GitHub 이슈에 남기고 UI 작업과 독립된 이슈 수정을 병행한다. 데이터 손실·주행 안전 위반·핵심 시연 불능은 우선 해결하고 우회 가능한 결함은 남은 한계를 명시한다. 실제 API 비용/인증 준비·발화 시점 및 이후 feature push/Release 게시 등 별도 승인 경계는 유지한다. 오늘 완료를 확약하거나 미구현 기능을 시연 완료로 표시하지 않는다.
+
+## 이전 3단계 기록
+
 갱신일: 2026-11-14 (Asia/Seoul). **3단계 구현·필수 검증·독립 검토를 완료했습니다.** 이 문서는 구현된 체크포인트와 시험 방법을 넘기는 자료이며 릴리즈 완료 선언이 아닙니다. 코드·문서 어느 push든 이 문서를 먼저 갱신하고, 실제 브랜치·커밋과 대조합니다.
 
 ## 먼저 읽을 자료와 우선순위

@@ -45,11 +45,13 @@ import app.memoryvault.DemoConfig
 import app.memoryvault.R
 import app.memoryvault.TypedMemoResult
 import app.memoryvault.data.DayDraft
+import app.memoryvault.data.LinkState
 import app.memoryvault.data.Note
 import app.memoryvault.data.NoteVisitLink
 import app.memoryvault.domain.DriveState
 import app.memoryvault.platform.DriveReadinessReason
 import app.memoryvault.platform.DriveSnapshot
+import app.memoryvault.platform.PhotoAccess
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
@@ -82,13 +84,21 @@ fun MemoryVaultScreen(
     ui: MemoryVaultUi,
     onRequestPermissions: () -> Unit,
     permissionSummary: Int = R.string.voice_permissions_needed,
+    onRequestPhotoPermissions: () -> Unit = {},
 ) {
     val snapshot by ui.driveSnapshot.collectAsStateWithLifecycle()
     val voice by ui.voiceState.collectAsStateWithLifecycle()
     val readyEnabled by ui.readyNotificationEnabled.collectAsStateWithLifecycle()
+    val photoReview by ui.photoReview.collectAsStateWithLifecycle()
+    val displayedPhotoGeneration = snapshot.invalidationGeneration
+    fun photosAllowed() = ui.driveSnapshot.value.let {
+        it.state == DriveState.PARKED && it.invalidationGeneration == displayedPhotoGeneration
+    }
     var editor by rememberSaveable(stateSaver = editorSaver) { mutableStateOf(MemoEditorState()) }
     var typedNotice by rememberSaveable { mutableStateOf<Int?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var photoSaving by remember { mutableStateOf(false) }
+    var photoNotice by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -133,6 +143,10 @@ fun MemoryVaultScreen(
                 VoiceControls(snapshot.state, voice, onStart = {
                     if (ui.driveSnapshot.value.state == DriveState.DRIVING) ui.startVoice()
                 }, onCancel = ui::cancelVoice)
+                PhotoSetup(photoReview, photoNotice, photoSaving,
+                    onPermissions = { if (photosAllowed()) onRequestPhotoPermissions() },
+                    onRefresh = { if (photosAllowed()) ui.refreshPhotos() },
+                )
                 typedNotice?.let { Text(stringResource(it), modifier = Modifier.testTag("typed-result")) }
                 if (editor.visitId != null && editor.text.isNotEmpty() && !editor.isOpen && editor.pendingTarget == null) {
                     OutlinedButton(
@@ -159,6 +173,20 @@ fun MemoryVaultScreen(
                             val current = ui.driveSnapshot.value
                             editor = editor.openEdit(note, current.state, current.invalidationGeneration)
                             typedNotice = null
+                        },
+                        photoAccess = photoReview.permissions.access != PhotoAccess.DENIED,
+                        ui = ui, thumbnailEpoch = photoReview.thumbnailEpoch,
+                        photoActionsEnabled = !photoSaving,
+                        onPhotoDecision = { uri, decision ->
+                            if (photosAllowed() && !photoSaving) {
+                                photoSaving = true
+                                scope.launch {
+                                    try {
+                                        photoNotice = (if (photosAllowed()) ui.setPhotoState(uri, decision)
+                                            else PhotoReviewResult.BLOCKED).textResource()
+                                    } finally { photoSaving = false }
+                                }
+                            }
                         },
                     )
                 }
@@ -293,7 +321,19 @@ private fun LockedStatus(snapshot: DriveSnapshot, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun DayContent(draft: DayDraft, editingEnabled: Boolean, onAdd: (String) -> Unit, onEdit: (Note) -> Unit) {
+private fun DayContent(
+    draft: DayDraft,
+    editingEnabled: Boolean,
+    onAdd: (String) -> Unit,
+    onEdit: (Note) -> Unit,
+    photoAccess: Boolean,
+    ui: MemoryVaultUi,
+    thumbnailEpoch: PhotoThumbnailEpoch?,
+    photoActionsEnabled: Boolean,
+    onPhotoDecision: (String, LinkState) -> Unit,
+) {
+    if (photoAccess && draft.unlinkedPhotos.isNotEmpty()) Text(stringResource(R.string.photo_unlinked_count, draft.unlinkedPhotos.size))
+    if (draft.inaccessiblePhotoCount > 0) Text(stringResource(R.string.photo_inaccessible_count, draft.inaccessiblePhotoCount))
     Text(stringResource(R.string.pending_voice_title), style = MaterialTheme.typography.titleLarge)
     if (draft.pendingNotes.isEmpty()) Text(stringResource(R.string.pending_voice_empty))
     draft.pendingNotes.forEach { note ->
@@ -310,7 +350,8 @@ private fun DayContent(draft: DayDraft, editingEnabled: Boolean, onAdd: (String)
                 Text("${formatTime(card.visit.arrivedAt)} – ${formatTime(card.visit.leftAt)}")
                 if (card.notes.isEmpty()) Text(stringResource(R.string.memo_empty))
                 card.notes.forEach { MemoContent(it, card.noteLinks, editingEnabled, onEdit) }
-                Text(stringResource(if (card.photos.isEmpty()) R.string.photo_empty else R.string.photo_count, card.photos.size))
+                if (photoAccess) PhotoList(card.photos, photoActionsEnabled, onPhotoDecision, ui, thumbnailEpoch)
+                else Text(stringResource(R.string.photo_access_card_hidden))
                 OutlinedButton(onClick = { onAdd(card.visit.id) }, enabled = editingEnabled, modifier = Modifier.heightIn(min = 64.dp)) {
                     Text(stringResource(R.string.memo_add))
                 }

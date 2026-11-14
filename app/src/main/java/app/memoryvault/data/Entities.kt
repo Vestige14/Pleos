@@ -1,6 +1,7 @@
 package app.memoryvault.data
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -35,6 +36,7 @@ data class Photo(
     val lng: Double?,
     val visitId: String?,
     val linkState: LinkState,
+    @ColumnInfo(defaultValue = "1") val accessible: Boolean = true,
 )
 
 @Entity(
@@ -116,4 +118,10 @@ data class VisitCard(
     val notes: List<Note>,
     val noteLinks: List<NoteVisitLink> = emptyList(),
 )
-data class DayDraft(val date: String, val cards: List<VisitCard>, val pendingNotes: List<Note> = emptyList())
+data class DayDraft(
+    val date: String,
+    val cards: List<VisitCard>,
+    val pendingNotes: List<Note> = emptyList(),
+    val unlinkedPhotos: List<Photo> = emptyList(),
+    val inaccessiblePhotoCount: Int = 0,
+)
