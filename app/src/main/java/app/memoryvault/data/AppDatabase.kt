@@ -4,11 +4,16 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import app.memoryvault.memory.MemoryReviewState
+import app.memoryvault.memory.MemoryAssociationLink
+import app.memoryvault.memory.MemoryPhotoDescription
+import app.memoryvault.memory.MemoryAssociationDao
 
 @Database(
     entities = [Visit::class, Photo::class, Note::class, NoteVisitLink::class, NoteLinkPolicy::class,
-        AiLinkJob::class, AiLinkRequestSnapshot::class],
-    version = 2,
+        AiLinkJob::class, AiLinkRequestSnapshot::class, MemoryReviewState::class,
+        MemoryAssociationLink::class, MemoryPhotoDescription::class],
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -25,4 +30,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun noteLinkDao(): NoteLinkDao
     abstract fun aiLinkDao(): AiLinkDao
+    abstract fun memoryAssociationDao(): MemoryAssociationDao
 }

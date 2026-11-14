@@ -23,10 +23,11 @@ class AiLinkQueue(private val db: AppDatabase, private val now: () -> Long = Sys
     }
 
     override suspend fun getJob(jobId: String): AiLinkJob? = db.aiLinkDao().getJob(jobId)
-    override suspend fun pendingJobs(): List<AiLinkJob> = db.aiLinkDao().getAllJobs().filter { it.state in active }
+    override suspend fun pendingJobs(): List<AiLinkJob> = db.aiLinkDao().getAllJobs().filter { it.promptVersion == "memory-links-v1" && it.state in active }
 
     override suspend fun claim(jobId: String): LinkLease? = db.withTransaction {
         val job = getJob(jobId) ?: return@withTransaction null
+        if (job.promptVersion != "memory-links-v1") return@withTransaction null
         val time = now()
         if (job.state !in active || job.nextAttemptAt > time ||
             job.state == AiLinkJobState.RUNNING && (job.leaseUntil ?: Long.MAX_VALUE) > time) return@withTransaction null
@@ -82,7 +83,7 @@ class AiLinkQueue(private val db: AppDatabase, private val now: () -> Long = Sys
     }
 
     override suspend fun fail(jobId: String, failure: LinkFailure, attemptToken: String): AiLinkJobState? = db.withTransaction {
-        val job = getJob(jobId)?.takeIf { it.acceptsLinkFailure(attemptToken, now(), failure.code) }
+        val job = getJob(jobId)?.takeIf { it.promptVersion == "memory-links-v1" && it.acceptsLinkFailure(attemptToken, now(), failure.code) }
             ?: return@withTransaction null
         if (currentRequest(job) == null) {
             finish(job, AiLinkJobState.SUPERSEDED, null); return@withTransaction AiLinkJobState.SUPERSEDED
@@ -111,12 +112,12 @@ class AiLinkQueue(private val db: AppDatabase, private val now: () -> Long = Sys
     override suspend fun blockForConfiguration(jobId: String, code: LinkError) = db.withTransaction {
         require(code.name in configurationCodes)
         val job = getJob(jobId) ?: return@withTransaction
-        if (job.state in setOf(AiLinkJobState.WAITING, AiLinkJobState.RETRY_WAIT))
+        if (job.promptVersion == "memory-links-v1" && job.state in setOf(AiLinkJobState.WAITING, AiLinkJobState.RETRY_WAIT))
             finish(job, AiLinkJobState.BLOCKED, code.name)
     }
 
     override suspend fun resumeConfigurationBlocked() = db.withTransaction {
-        db.aiLinkDao().getAllJobs().filter { it.state == AiLinkJobState.BLOCKED && it.lastErrorCode in configurationCodes }.forEach {
+        db.aiLinkDao().getAllJobs().filter { it.promptVersion == "memory-links-v1" && it.state == AiLinkJobState.BLOCKED && it.lastErrorCode in configurationCodes }.forEach {
             if (currentRequest(it) == null) finish(it, AiLinkJobState.SUPERSEDED, null)
             else if (it.attempts >= MAX_ATTEMPTS) finish(it, AiLinkJobState.REVIEW_REQUIRED, LinkError.ATTEMPTS_EXHAUSTED.name)
             else db.aiLinkDao().updateJob(it.copy(state = AiLinkJobState.WAITING, nextAttemptAt = now(), lastErrorCode = null))
@@ -124,7 +125,7 @@ class AiLinkQueue(private val db: AppDatabase, private val now: () -> Long = Sys
     }
 
     private suspend fun ownedJob(jobId: String, token: String): AiLinkJob? = getJob(jobId)?.takeIf {
-        it.state == AiLinkJobState.RUNNING && it.attemptToken == token && (it.leaseUntil ?: Long.MIN_VALUE) > now()
+        it.promptVersion == "memory-links-v1" && it.state == AiLinkJobState.RUNNING && it.attemptToken == token && (it.leaseUntil ?: Long.MIN_VALUE) > now()
     }
     private suspend fun finish(job: AiLinkJob, state: AiLinkJobState, error: String?) {
         db.aiLinkDao().updateJob(job.copy(state = state, attemptToken = null, leaseUntil = null, lastErrorCode = error))

@@ -81,6 +81,18 @@ interface NoteLinkDao {
 
     @Query("SELECT * FROM note_link_policies ORDER BY noteId")
     suspend fun getAllPolicies(): List<NoteLinkPolicy>
+
+    @Upsert
+    suspend fun savePolicy(policy: NoteLinkPolicy)
+
+    @Query("UPDATE note_visit_links SET status = :status WHERE noteId = :noteId AND origin = 'AI' AND status = 'SUGGESTED'")
+    suspend fun decideSuggestions(noteId: Long, status: String)
+
+    @Upsert
+    suspend fun saveLinkForReview(link: NoteVisitLink)
+
+    @Query("UPDATE note_visit_links SET status = 'REJECTED' WHERE noteId = :noteId AND status != 'REJECTED'")
+    suspend fun rejectActiveForReview(noteId: Long)
 }
 
 @Dao
@@ -103,7 +115,7 @@ interface AiLinkDao {
     @Query("SELECT * FROM ai_link_jobs ORDER BY jobId")
     suspend fun getAllJobs(): List<AiLinkJob>
 
-    @Query("SELECT * FROM ai_link_jobs WHERE noteId = :noteId AND noteRevision = :noteRevision AND userRevision = :userRevision LIMIT 1")
+    @Query("SELECT * FROM ai_link_jobs WHERE noteId = :noteId AND noteRevision = :noteRevision AND userRevision = :userRevision AND promptVersion = 'memory-links-v1' LIMIT 1")
     suspend fun getForRevision(noteId: Long, noteRevision: Int, userRevision: Int): AiLinkJob?
 
     @Query("SELECT * FROM ai_link_request_snapshots WHERE jobId = :jobId")

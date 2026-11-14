@@ -12,6 +12,7 @@ dependencies = [
   "openai==2.8.1",
   "httpx==0.28.1",
   "uvicorn==0.38.0",
+  "Pillow==13.0.0",
 ]
 
 [project.optional-dependencies]

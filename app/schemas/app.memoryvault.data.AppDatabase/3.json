@@ -1,0 +1,814 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "56bea19bb9ec5cad04566041ddf12307",
+    "entities": [
+      {
+        "tableName": "visits",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `date` TEXT NOT NULL, `placeName` TEXT NOT NULL, `lat` REAL NOT NULL, `lng` REAL NOT NULL, `arrivedAt` INTEGER NOT NULL, `leftAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "date",
+            "columnName": "date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "placeName",
+            "columnName": "placeName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lat",
+            "columnName": "lat",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lng",
+            "columnName": "lng",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "arrivedAt",
+            "columnName": "arrivedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leftAt",
+            "columnName": "leftAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "photos",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uri` TEXT NOT NULL, `takenAt` INTEGER, `lat` REAL, `lng` REAL, `visitId` TEXT, `linkState` TEXT NOT NULL, `accessible` INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(`uri`), FOREIGN KEY(`visitId`) REFERENCES `visits`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "uri",
+            "columnName": "uri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "takenAt",
+            "columnName": "takenAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lat",
+            "columnName": "lat",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "lng",
+            "columnName": "lng",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "visitId",
+            "columnName": "visitId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "linkState",
+            "columnName": "linkState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accessible",
+            "columnName": "accessible",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uri"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_photos_visitId",
+            "unique": false,
+            "columnNames": [
+              "visitId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_visitId` ON `${TABLE_NAME}` (`visitId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "visits",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "visitId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "notes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `visitId` TEXT, `text` TEXT NOT NULL, `kind` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `captureVisitId` TEXT, `capturedAt` INTEGER NOT NULL, `sourceDate` TEXT NOT NULL, `revision` INTEGER NOT NULL, `voiceSessionId` TEXT, `refinedText` TEXT, FOREIGN KEY(`visitId`) REFERENCES `visits`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION , FOREIGN KEY(`captureVisitId`) REFERENCES `visits`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "visitId",
+            "columnName": "visitId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "captureVisitId",
+            "columnName": "captureVisitId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "capturedAt",
+            "columnName": "capturedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceDate",
+            "columnName": "sourceDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "voiceSessionId",
+            "columnName": "voiceSessionId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "refinedText",
+            "columnName": "refinedText",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_notes_visitId",
+            "unique": false,
+            "columnNames": [
+              "visitId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_notes_visitId` ON `${TABLE_NAME}` (`visitId`)"
+          },
+          {
+            "name": "index_notes_captureVisitId",
+            "unique": false,
+            "columnNames": [
+              "captureVisitId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_notes_captureVisitId` ON `${TABLE_NAME}` (`captureVisitId`)"
+          },
+          {
+            "name": "index_notes_sourceDate",
+            "unique": false,
+            "columnNames": [
+              "sourceDate"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_notes_sourceDate` ON `${TABLE_NAME}` (`sourceDate`)"
+          },
+          {
+            "name": "index_notes_voiceSessionId",
+            "unique": true,
+            "columnNames": [
+              "voiceSessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_notes_voiceSessionId` ON `${TABLE_NAME}` (`voiceSessionId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "visits",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "visitId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "visits",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "captureVisitId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "note_visit_links",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`noteId` INTEGER NOT NULL, `visitId` TEXT NOT NULL, `startCp` INTEGER NOT NULL, `endCp` INTEGER NOT NULL, `origin` TEXT NOT NULL, `status` TEXT NOT NULL, `requestId` TEXT, PRIMARY KEY(`noteId`, `visitId`, `startCp`, `endCp`, `origin`), FOREIGN KEY(`noteId`) REFERENCES `notes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`visitId`) REFERENCES `visits`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "noteId",
+            "columnName": "noteId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "visitId",
+            "columnName": "visitId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startCp",
+            "columnName": "startCp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endCp",
+            "columnName": "endCp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "noteId",
+            "visitId",
+            "startCp",
+            "endCp",
+            "origin"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_note_visit_links_visitId",
+            "unique": false,
+            "columnNames": [
+              "visitId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_note_visit_links_visitId` ON `${TABLE_NAME}` (`visitId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "notes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "noteId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "visits",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "visitId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "note_link_policies",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`noteId` INTEGER NOT NULL, `userRevision` INTEGER NOT NULL, `userLocked` INTEGER NOT NULL, PRIMARY KEY(`noteId`), FOREIGN KEY(`noteId`) REFERENCES `notes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "noteId",
+            "columnName": "noteId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userRevision",
+            "columnName": "userRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userLocked",
+            "columnName": "userLocked",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "noteId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "notes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "noteId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "ai_link_jobs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`jobId` TEXT NOT NULL, `noteId` INTEGER NOT NULL, `noteRevision` INTEGER NOT NULL, `userRevision` INTEGER NOT NULL, `contextHash` TEXT NOT NULL, `promptVersion` TEXT NOT NULL, `state` TEXT NOT NULL, `attempts` INTEGER NOT NULL, `nextAttemptAt` INTEGER NOT NULL, `leaseUntil` INTEGER, `attemptToken` TEXT, `lastErrorCode` TEXT, PRIMARY KEY(`jobId`), FOREIGN KEY(`noteId`) REFERENCES `notes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "jobId",
+            "columnName": "jobId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "noteId",
+            "columnName": "noteId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "noteRevision",
+            "columnName": "noteRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userRevision",
+            "columnName": "userRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contextHash",
+            "columnName": "contextHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "promptVersion",
+            "columnName": "promptVersion",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextAttemptAt",
+            "columnName": "nextAttemptAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leaseUntil",
+            "columnName": "leaseUntil",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attemptToken",
+            "columnName": "attemptToken",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastErrorCode",
+            "columnName": "lastErrorCode",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "jobId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_ai_link_jobs_noteId_noteRevision_userRevision",
+            "unique": false,
+            "columnNames": [
+              "noteId",
+              "noteRevision",
+              "userRevision"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ai_link_jobs_noteId_noteRevision_userRevision` ON `${TABLE_NAME}` (`noteId`, `noteRevision`, `userRevision`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "notes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "noteId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "ai_link_request_snapshots",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`jobId` TEXT NOT NULL, `candidatesJson` TEXT NOT NULL, PRIMARY KEY(`jobId`), FOREIGN KEY(`jobId`) REFERENCES `ai_link_jobs`(`jobId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "jobId",
+            "columnName": "jobId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "candidatesJson",
+            "columnName": "candidatesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "jobId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "ai_link_jobs",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "jobId"
+            ],
+            "referencedColumns": [
+              "jobId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "memory_review_states",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`noteId` INTEGER NOT NULL, `status` TEXT NOT NULL, `activeJobId` TEXT, `eventDateOverride` TEXT, `pageOffset` INTEGER NOT NULL, `nextOffset` INTEGER NOT NULL, `hasMore` INTEGER NOT NULL, `issues` TEXT NOT NULL, `errorCode` TEXT, PRIMARY KEY(`noteId`), FOREIGN KEY(`noteId`) REFERENCES `notes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "noteId",
+            "columnName": "noteId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeJobId",
+            "columnName": "activeJobId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "eventDateOverride",
+            "columnName": "eventDateOverride",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "pageOffset",
+            "columnName": "pageOffset",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextOffset",
+            "columnName": "nextOffset",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasMore",
+            "columnName": "hasMore",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "issues",
+            "columnName": "issues",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "errorCode",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "noteId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "notes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "noteId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "memory_association_links",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`noteId` INTEGER NOT NULL, `targetId` TEXT NOT NULL, `kind` TEXT NOT NULL, `startCp` INTEGER NOT NULL, `endCp` INTEGER NOT NULL, `origin` TEXT NOT NULL, `status` TEXT NOT NULL, `sourceJson` TEXT NOT NULL, `requestId` TEXT, PRIMARY KEY(`noteId`, `targetId`, `kind`, `startCp`, `endCp`, `origin`), FOREIGN KEY(`noteId`) REFERENCES `notes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "noteId",
+            "columnName": "noteId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetId",
+            "columnName": "targetId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startCp",
+            "columnName": "startCp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endCp",
+            "columnName": "endCp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceJson",
+            "columnName": "sourceJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "noteId",
+            "targetId",
+            "kind",
+            "startCp",
+            "endCp",
+            "origin"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "notes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "noteId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "memory_photo_descriptions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`cacheKey` TEXT NOT NULL, `imageSha256` TEXT NOT NULL, `model` TEXT NOT NULL, `analysisVersion` TEXT NOT NULL, `requestId` TEXT NOT NULL, `state` TEXT NOT NULL, `attempts` INTEGER NOT NULL, `nextAttemptAt` INTEGER NOT NULL, `leaseUntil` INTEGER, `attemptToken` TEXT, `description` TEXT, `labelsJson` TEXT, `errorCode` TEXT, PRIMARY KEY(`cacheKey`))",
+        "fields": [
+          {
+            "fieldPath": "cacheKey",
+            "columnName": "cacheKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageSha256",
+            "columnName": "imageSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysisVersion",
+            "columnName": "analysisVersion",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextAttemptAt",
+            "columnName": "nextAttemptAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leaseUntil",
+            "columnName": "leaseUntil",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attemptToken",
+            "columnName": "attemptToken",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "labelsJson",
+            "columnName": "labelsJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "errorCode",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "cacheKey"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_photo_descriptions_imageSha256_model_analysisVersion",
+            "unique": true,
+            "columnNames": [
+              "imageSha256",
+              "model",
+              "analysisVersion"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_photo_descriptions_imageSha256_model_analysisVersion` ON `${TABLE_NAME}` (`imageSha256`, `model`, `analysisVersion`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '56bea19bb9ec5cad04566041ddf12307')"
+    ]
+  }
+}

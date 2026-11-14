@@ -14,7 +14,11 @@ import kotlinx.coroutines.sync.withLock
 
 class PhotoOperationBlocked : IllegalStateException("Photo operation requires current parked state")
 
-class MemoryRepository(private val db: AppDatabase, private val photoSource: PhotoSource = PhotoSource { PhotoScan(emptyList()) }) {
+class MemoryRepository(
+    private val db: AppDatabase,
+    private val photoSource: PhotoSource = PhotoSource { PhotoScan(emptyList()) },
+    private val enqueueVoiceLink: suspend (Long) -> Unit = { AiLinkQueue(db).enqueueLinkJob(it); Unit },
+) {
     private val photoSync = Mutex()
 
     /** The scan covers the library, so matching uses all visits rather than erasing other days' links. */
@@ -132,7 +136,7 @@ class MemoryRepository(private val db: AppDatabase, private val photoSource: Pho
                 voiceSessionId = sessionId,
             ))
             db.noteLinkDao().insertPolicy(NoteLinkPolicy(noteId))
-            AiLinkQueue(db).enqueueLinkJob(noteId)
+            enqueueVoiceLink(noteId)
             noteId
         }
     }

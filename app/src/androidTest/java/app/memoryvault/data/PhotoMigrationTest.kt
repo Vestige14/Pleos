@@ -37,7 +37,7 @@ class PhotoMigrationTest {
             }
             helper.runMigrationsAndValidate(name, 2, true, AppDatabase.MIGRATION_1_2).close()
             val db = Room.databaseBuilder(context, AppDatabase::class.java, name)
-                .addMigrations(AppDatabase.MIGRATION_1_2).build()
+                .addMigrations(AppDatabase.MIGRATION_1_2, app.memoryvault.memory.MemoryAssociationMigration.FROM_2_TO_3).build()
             try {
                 assertEquals(listOf("v1"), db.visitDao().getDay("2026-11-08").map { it.id })
                 val photos = db.photoDao().getAll()

@@ -160,6 +160,7 @@ fun MemoryVaultScreen(
                 )
                 MemoryLinkEntry(ui.driveSnapshot, ui.aiProgress)
                 CaptureEntry(ui.driveSnapshot)
+                app.memoryvault.memory.ui.MemoryAssociationEntry(ui.driveSnapshot)
                 typedNotice?.let { Text(stringResource(it), modifier = Modifier.testTag("typed-result")) }
                 if (editor.visitId != null && editor.text.isNotEmpty() && !editor.isOpen && editor.pendingTarget == null) {
                     OutlinedButton(

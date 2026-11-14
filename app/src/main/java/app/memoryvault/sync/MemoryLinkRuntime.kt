@@ -42,9 +42,11 @@ object MemoryLinkRuntime {
         }
     }
     fun reconcilePendingJobs(context: Context) {
+        app.memoryvault.memory.MemoryAssociationRuntime.instance.value?.reconcile()
         scope.launch { try { scheduler?.reconcilePendingJobs() } catch (e: CancellationException) { throw e } catch (_: Exception) { } }
     }
     fun onSessionUpdated(context: Context) {
+        app.memoryvault.memory.MemoryAssociationRuntime.instance.value?.onSessionUpdated()
         scope.launch {
             try { queue?.resumeConfigurationBlocked(); scheduler?.reconcilePendingJobs() }
             catch (e: CancellationException) { throw e } catch (_: Exception) { }

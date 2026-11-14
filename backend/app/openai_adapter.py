@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from email.utils import parsedate_to_datetime
+from typing import Protocol
 
 import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -69,6 +70,10 @@ def _retry_after(headers: httpx.Headers) -> int:
     except (TypeError, ValueError, OverflowError):
         pass
     return 30
+
+
+class RequestIdentity(Protocol):
+    requestId: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +139,16 @@ class OpenAILinkAdapter:
                    admit_call=admit_call, on_usage=on_usage)
 
     async def suggest(self, request: LinkRequest) -> object:
+        data = {"capturedAt": request.capturedAt.isoformat(), "text": request.text,
+                "candidates": [candidate.model_dump(mode="json") for candidate in request.candidates]}
+        return await self._request_json(
+            request, model_input=[{"role": "system", "content": SYSTEM_PROMPT},
+                                  {"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
+            schema_name="memory_links", schema=MODEL_SCHEMA)
+
+    async def _request_json(self, request: RequestIdentity, *, model_input: list,
+                            schema_name: str, schema: dict) -> object:
+        """One transport/usage boundary, with route-owned fixed input and schema."""
         deadline = asyncio.get_running_loop().time() + self.timeout_seconds
         if self.admit_call is not None:
             try:
@@ -143,17 +158,14 @@ class OpenAILinkAdapter:
                 raise ModelCallError(Failure(429, "ADMISSION_REJECTED", False)) from None
             if allowed is not True:
                 raise ModelCallError(Failure(429, "ADMISSION_REJECTED", False))
-        data = {"capturedAt": request.capturedAt.isoformat(), "text": request.text,
-                "candidates": [candidate.model_dump(mode="json") for candidate in request.candidates]}
         try:
             async with asyncio.timeout_at(deadline):
                 response = await self.client.responses.create(
                     model=self.model, store=False, max_output_tokens=2048,
                     reasoning={"effort": self.reasoning_effort}, service_tier="default",
-                    input=[{"role": "system", "content": SYSTEM_PROMPT},
-                           {"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
-                    text={"format": {"type": "json_schema", "name": "memory_links",
-                                     "strict": True, "schema": MODEL_SCHEMA}},
+                    input=model_input,
+                    text={"format": {"type": "json_schema", "name": schema_name,
+                                     "strict": True, "schema": schema}},
                 )
         except asyncio.CancelledError:
             # A surrounding service deadline can cancel before this adapter's own deadline.
@@ -206,7 +218,7 @@ class OpenAILinkAdapter:
         except (ValueError, TypeError, RecursionError):
             return None
 
-    async def _record_usage(self, request: LinkRequest, outcome: str, response: Response | None = None) -> None:
+    async def _record_usage(self, request: RequestIdentity, outcome: str, response: Response | None = None) -> None:
         if self.on_usage is None:
             return
         usage = getattr(response, "usage", None) if isinstance(response, Response) else None

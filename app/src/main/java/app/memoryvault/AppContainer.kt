@@ -6,6 +6,7 @@ import android.util.Size
 import androidx.core.net.toUri
 import androidx.room.Room
 import app.memoryvault.sync.MemoryLinkRuntime
+import app.memoryvault.navigation.PleosNavigationEvidenceSource
 import app.memoryvault.data.AppDatabase
 import app.memoryvault.data.MemoryRepository
 import app.memoryvault.data.MediaStorePhotoSource
@@ -78,6 +79,7 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val started = AtomicBoolean(false)
     private val driveSource = AaosDriveStateSource(appContext)
+    val navigationEvidence = PleosNavigationEvidenceSource(appContext)
     val driveSnapshot = driveSource.snapshot
     private val driveSafety = DriveSafetyBridge(driveSnapshot)
     val driveState = driveSafety.state
@@ -90,11 +92,11 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
 
     private val startup = RepositoryStartup {
         val database = Room.databaseBuilder(appContext, AppDatabase::class.java, "memory-vault.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2).build()
+            .addMigrations(AppDatabase.MIGRATION_1_2, app.memoryvault.memory.MemoryAssociationMigration.FROM_2_TO_3).build()
         try {
             val result = MemoryRepository(database, MediaStorePhotoSource(appContext) {
                 driveSnapshot.value.state == DriveState.PARKED
-            })
+            }, enqueueVoiceLink = { noteId -> app.memoryvault.memory.MemoryAssociationStore(database).register(noteId) })
             val seed = appContext.assets.open("seed_day.json").bufferedReader().use { SeedLoader.parse(it.readText()) }
             result.seedIfEmpty(seed)
             try {
@@ -103,6 +105,8 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { /* Private capture screen reports a broken index; existing DB stays available. */ }
+            app.memoryvault.memory.MemoryAssociationRuntime(appContext, database, driveSnapshot,
+                navigation = navigationEvidence).start()
             MemoryLinkRuntime.start(appContext, database)
             result
         } catch (failure: Throwable) {
@@ -141,6 +145,7 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
         if (!started.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) { startup.initialize() }
         driveSource.start()
+        navigationEvidence.start()
         scope.launch { repository.collect { if (it is RepositoryState.Ready) photos.onStorageReady() } }
         scope.launch {
             combine(readyNotificationEnabled, driveState, voiceState) { _, _, _ -> Unit }.collect {

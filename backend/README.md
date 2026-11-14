@@ -14,7 +14,7 @@ backend/.venv/bin/python -m pip check
 backend/.venv/bin/python -m pytest backend
 ```
 
-`pyproject.toml`의 직접 의존성과 `requirements.lock`의 전이·검사 의존성을 정확한 버전으로 고정했습니다. FastAPI 0.121.3, Pydantic 2.12.4, OpenAI 2.8.1, HTTPX 0.28.1, Uvicorn 0.38.0입니다. 버전을 자동으로 추적하거나 실패 시 다른 모델로 전환하지 않습니다. PDF 읽기에 사용한 pypdf/Pillow는 실행 의존성이 아닙니다.
+`pyproject.toml`의 직접 의존성과 `requirements.lock`의 전이·검사 의존성을 정확한 버전으로 고정했습니다. FastAPI 0.121.3, Pydantic 2.12.4, OpenAI 2.8.1, HTTPX 0.28.1, Uvicorn 0.38.0입니다. 7단계 사진 JPEG 디코딩·메타데이터 제거를 위해 Pillow 13.0.0을 추가했습니다. 이 새 의존성은 구현자가 설치하거나 실행 검증하지 않았습니다. 버전을 자동으로 추적하거나 실패 시 다른 모델로 전환하지 않습니다. PDF 읽기용 pypdf는 실행 의존성이 아닙니다.
 
 ## 키가 필요 없는 실행 결과 확인
 
@@ -126,7 +126,7 @@ requestId와 검증한 canonical JSON의 SHA-256을 묶습니다. JSON 객체 �
 | 503 | OUTCOME_UNKNOWN, ATTEMPTS_EXHAUSTED, SERVER_CLOSED | retryable=false, 자동 반복 금지 |
 | 500 | INTERNAL_ERROR | 고정 오류만 반환, 자동 반복 금지 |
 
-Responses 요청은 `store=false`, 엄격한 `text.format` JSON Schema, 최대 출력 2,048 tokens, 전체 최대 30초를 사용합니다. 대화 이력·이전 응답·도구·파일·사진·정확한 좌표·주소를 전송하지 않습니다. 지시문은 고정 system 메시지이고 발화·장소 이름은 user JSON 데이터로만 넣습니다. 이 격리는 프롬프트 공격 성공률을 실모델에서 검증했다는 뜻이 아닙니다.
+v1 Responses 요청은 `store=false`, 엄격한 `text.format` JSON Schema, 최대 출력 2,048 tokens, 전체 최대 30초를 사용합니다. 대화 이력·이전 응답·도구·파일·사진·정확한 좌표·주소를 전송하지 않습니다. 지시문은 고정 system 메시지이고 발화·장소 이름은 user JSON 데이터로만 넣습니다. 이 격리는 프롬프트 공격 성공률을 실모델에서 검증했다는 뜻이 아닙니다.
 
 애플리케이션은 본문·토큰·Authorization·예외 원문을 기록하지 않고 SDK/HTTP transport의 기존 민감 로그를 비활성화합니다. 제시한 실행 명령은 access log도 끕니다. 별도 host instrumentation이나 사용자가 임의로 켠 외부 로그의 안전성을 보장하지 않습니다. `store=false`가 OpenAI의 모든 보관을 없앤다는 뜻은 아니며 실제 [데이터 보관 조건](https://developers.openai.com/api/docs/guides/your-data)을 별도로 확인해야 합니다.
 
@@ -187,3 +187,37 @@ SDK 2.8.1의 실제 MockTransport wire에서 이 필드 전달을 검증했습�
 - 멱등 완료 캐시·동시 요청 합류는 모델/admission/사용량 hook을 중복 실행하지 않습니다. hook은 프로세스 재시작 이후 중복 과금 방지나 영속 원장을 자동 제공하지 않습니다. 총괄의 로컬 admission은 호출 전 예약과 불명확한 사용량 처리를 함께 책임져야 합니다.
 
 기본 factory를 운영할 때도 총괄의 사전 승인·누적 한도 확인이 필요합니다. 실제 자동 queue 시험 전에는 총괄이 hook을 연결한 로컬 adapter/service를 조립하거나 동등한 로컬 통제를 준비합니다. hook의 존재만으로 실API 안전 수락을 완료했다고 주장하지 않습니다.
+
+## 7단계 v2 — 구현 인계, 검증은 V 전담
+
+아래는 [공유 계약 v1.1](../docs/superpowers/specs/2026-11-15-stage7-memory-contract.md)의 `/v2` 제품 코드입니다. 구현자의 빌드·시험·코드 검토·서버·실API 실행은 **NOT_RUN_BY_DESIGN**입니다. 기존 v1 검증 이력을 새 v2 통과 근거로 사용하지 않습니다. 실제 설정 모델의 이미지 지원·품질·지연·사용량은 V의 합성 입력 수락 전까지 미확인입니다.
+
+기존 `create_app(session_token=..., service=...)` 인자는 유지하며 `photo_service`와 `association_service`를 선택 인자로 추가했습니다. 기본 factory는 기존 v1 `OpenAILinkAdapter` 한 개를 빌려 세 경로의 고정 모델·low 설정·default 요청 tier·admission/usage·오류 매핑·응답 파서를 함께 사용합니다. 기본 구성의 캐시/동시 실행/분당 호출 상한도 하나의 기존 `IdempotencyStore`를 공유합니다. v2 멱등 키는 경로별 SHA-512 namespace로 분리해 최대128자인 v1 requestId와 충돌하지 않게 합니다. SDK 재시도·모델 fallback은 추가하지 않았습니다.
+
+V는 네트워크 없는 모델을 생성자에 주입할 수 있습니다. `PhotoDescriptionService(photo_model, model_id="synthetic", store=...)`의 모델은 `describe(image_jpeg: bytes, *, request_id: str) -> object`, `aclose()`를 제공합니다. `MemoryAssociationService(association_model, store=...)`의 모델은 `suggest(request: MemoryLinkRequest) -> object`, `aclose()`를 제공합니다. 두 메서드는 비동기입니다. `create_app`에 v1 fake service만 제공한 경우 실제 환경/자격증명을 새로 읽지 않으며 v2의 유효 모델 요청은 `MODEL_NOT_CONFIGURED/retryable=false`로 남습니다. v2 fake도 명시적으로 주입하세요.
+
+### `POST /v2/photo-descriptions`
+
+요청 필드는 정확히 `requestId`, `imageSha256`(64hex), `mimeType`(`image/jpeg`), `imageBase64`입니다. URL·파일경로·날짜·GPS·STT·목적지·추가 필드는 받지 않습니다. 인증은 본문 읽기 전에 기존 방식으로 수행하며 JSON은 최대1,048,576bytes입니다. 디코딩 전 base64 길이, 디코딩 후 최대524,288bytes와 SHA-256, JPEG 형식·단일 이미지·긴 변1024px·실제 픽셀 로드를 검사합니다.
+
+이미지는 메모리의 새 RGB 캔버스에 픽셀만 옮겨 JPEG로 인코딩합니다. EXIF/ICC/XMP/COM/파일명은 새 이미지에 복사하지 않습니다. 품질85→70→55→40의 유한한 단계 중524,288bytes 이하인 첫 결과만 사용하며 초과는 오류입니다. 원본 이미지를 backend 디스크나 로그에 저장하지 않습니다. 고정 지시와 이 `input_image` 데이터만 모델 입력에 넣으며 requestId/hash도 prompt에 넣지 않습니다. 이미지에 보이는 명령은 지시로 따르지 않도록 고정 지시에 명시합니다.
+
+응답 필드는 정확히 `requestId`, `imageSha256`, `analysisVersion="visual-v1"`, `description`(비어 있지 않은 최대500codepoints), `labels`(최대12개, 각1~40codepoints)입니다. 서버 응답 해시는 Android가 보낸 re-encode bytes의 해시를 그대로 반환합니다. 서버의 추가 메타데이터 제거 인코딩 해시로 바꾸지 않습니다. 모델은 눈에 보이는 사물/장면만 설명하고 지리적 장소·날짜·사용자 경험·감정을 추측하지 않도록 지시합니다. 이는 의미 품질이 검증됐다는 주장이 아닙니다.
+
+Android가 `imageSha256+model+analysisVersion` 기준 설명 캐시를 영속 보관합니다. backend에는 기존 최대24시간·1,024키 제한의 process-local 멱등 결과만 남습니다. 사진 canonical identity에는 모델/analysisVersion/전체 요청 해시를 포함하며 raw image/body는 완료 캐시에 남기지 않습니다. 동일 requestId 재호출/동시 합류는 결과를 재사용하고 변경 본문은409입니다. 캐시가 만료되거나 프로세스가 재시작한 뒤 exactly-once를 보장하지 않습니다.
+
+사진 고정 오류는 `INVALID_IMAGE`(422), `IMAGE_HASH_MISMATCH`(422), `IMAGE_TOO_LARGE`/`IMAGE_DIMENSIONS_TOO_LARGE`(413), `INVALID_MODEL_RESPONSE`(502)입니다. 모두 `retryable=false`이며 기존 오류 envelope와 no-store 정책을 사용합니다. 손상 이미지와 불완전·추가필드/초과 모델 결과를 성공으로 반환하지 않습니다.
+
+### `POST /v2/memory-links`
+
+본문은 최대65,536bytes입니다. `requestId`, `noteRevision`, `userRevision`, `contextHash`, `capturedAt`, `text`, `timeScope`, `candidates`만 받으며 정확한 후보 필드는 공유 계약을 따릅니다. 필수 nullable 필드도 명시적null로 보냅니다. 원문은 최대4,000codepoints, 후보20개·사진10개·반환링크10개입니다. NOTE description은 후보 자신의 전체 불변 원문 최대4,000codepoints이며 다른 종류는1,000codepoints입니다. 초과는 오류이고 원문/후보를 서버가 조용히 자르지 않습니다.
+
+서버는 녹음 시각의 서울 날짜를 기준으로 오늘/아까, 어제/그제, 명시 날짜를 독립 해석합니다. 연도 없는 M월D일·M/D는 녹음일 이하의 가장 최근 유효 날짜를 사용합니다. 모호한 과거/지원하지 않는 미래 표현·날짜 충돌·요청 timeScope와 원문의 해석 불일치는 REVIEW/0모델호출입니다. NOTE 후보의 evidenceDate는 그 후보의 occurredAt(녹음/작성 시각)과 전체 원문으로 다시 검증합니다. PHOTO/VISIT는 실제 occurredAt 날짜와 evidenceDate가 일치해야 합니다.
+
+NAV_OBSERVED는 `occurredAt=null`이고 evidenceDate가 있으면 observedAt의 서울 날짜와 같아야 합니다. 이는 활성 목적지를 관측한 날짜이며 설정/방문/도착 날짜가 아닙니다. 현재 SDK의 NAV_ARRIVED도 정확한 event timestamp/좌표를 주지 않으므로 `occurredAt=null`·좌표null을 허용합니다. 이때 evidenceDate는 실제 arrival callback을 관측한 observedAt의 서울 날짜와 일치해야 하며 정확한 SDK 도착 시각이나 사용자 확정 방문을 만들지 않습니다. 실제 출처 event time이 제공된 NAV_ARRIVED만 해당 occurredAt 날짜를 사용합니다. UNDATED_RECENT는 evidenceDate/occurredAt 모두null입니다. 모델 지시에서도 내비 관측의 provenance를 구분합니다. 날짜 없는 후보와 선택된 경험 날짜가 다른 후보는 모델 입력에서 제외하며 허용 후보가0개면 NO_MATCH/0모델호출입니다. kind/timeBasis/좌표 쌍/출처 시각이 모순된 요청은422입니다.
+
+모델 내부 결과는 `decision`, `links:[{targetId,kind,evidenceQuote}]`만 받습니다. 서버는 실제 전송한 후보 ID/kind, 원문에 한 번만 나타나는 비공백 구절, 중복 대상·중복 범위·판정/links 정합을 검사합니다. 실패하면 전체 결과를 REVIEW/빈links로 보류합니다. 성공 응답은 요청 식별자/revision/contextHash를 그대로 붙이고 `links:[{targetId,kind,startCp,endCp}]`만 반환합니다. Python Unicode code point 반열린 구간이며 원문을 trim/재작성/정규화하지 않습니다. SUGGEST는 사용자 확인과 별개입니다.
+
+V의 핵심 사례는 사진 입력 sentinel 격리·메타데이터 제거·모든 크기 경계·손상 이미지/응답, 10/9사진+11/1‘오늘’의0호출, 재시도 날짜 독립, NOTE 자신의 과거 날짜, 후보 없음/UNRESOLVED0호출, 다른 날짜 후보 미전송, NAV 관측/날짜 없는 최근 목록, 후보 밖 ID/kind·emoji/중복 quote, 동일키 replay/409/동시 합류, admission/usage/OUTCOME_UNKNOWN, 기존 v1 계약 회귀입니다. 실행은 V가 현재 소스에서 시험을 작성한 뒤 focused `python -m pytest backend/tests/test_memory_v2*.py`와 최종 전체 backend 경계를 담당합니다. 구현자는 이 명령을 실행하지 않았습니다.
+
+구현에 참조한 공식 자료: [SDK2.8.1 input_image 데이터 URL 타입](https://github.com/openai/openai-python/blob/v2.8.1/src/openai/types/responses/response_input_image_param.py), [Pillow13.0.0 릴리즈](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html), [Pillow JPEG 읽기·인코딩 옵션](https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html#jpeg). 의존성 설치·Python3.11 실제 호환성·모델 이미지 지원은 V의 남은 확인 범위입니다.
