@@ -8,13 +8,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -37,7 +35,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -53,9 +50,6 @@ import app.memoryvault.data.NoteVisitLink
 import app.memoryvault.domain.DriveState
 import app.memoryvault.platform.DriveReadinessReason
 import app.memoryvault.platform.DriveSnapshot
-import app.memoryvault.service.VoiceNotice
-import app.memoryvault.service.VoiceServiceState
-import app.memoryvault.service.notice
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
@@ -299,26 +293,6 @@ private fun LockedStatus(snapshot: DriveSnapshot, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun VoiceControls(drive: DriveState, voice: VoiceServiceState, onStart: () -> Unit, onCancel: () -> Unit) {
-    val busy = voice == VoiceServiceState.CheckingVehicle || voice == VoiceServiceState.Preparing ||
-        voice == VoiceServiceState.Listening || voice == VoiceServiceState.Processing
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(stringResource(if (voice == VoiceServiceState.Idle) R.string.voice_idle else voice.notice().textResource()))
-        if (drive == DriveState.DRIVING && !busy) {
-            Button(onClick = onStart, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)) {
-                Icon(painterResource(R.drawable.ic_mic), contentDescription = null, modifier = Modifier.size(28.dp))
-                Text(stringResource(R.string.voice_leave_memo), modifier = Modifier.padding(start = 12.dp))
-            }
-        }
-        if (busy) {
-            OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)) {
-                Text(stringResource(R.string.voice_cancel_recording))
-            }
-        }
-    }
-}
-
-@Composable
 private fun DayContent(draft: DayDraft, editingEnabled: Boolean, onAdd: (String) -> Unit, onEdit: (Note) -> Unit) {
     Text(stringResource(R.string.pending_voice_title), style = MaterialTheme.typography.titleLarge)
     if (draft.pendingNotes.isEmpty()) Text(stringResource(R.string.pending_voice_empty))
@@ -372,20 +346,4 @@ private fun TypedMemoResult.textResource() = when (this) {
     TypedMemoResult.STORAGE_UNAVAILABLE -> R.string.storage_unavailable
     TypedMemoResult.NOT_EDITABLE -> R.string.memo_not_editable
     TypedMemoResult.FAILED -> R.string.memo_save_failed
-}
-
-private fun VoiceNotice.textResource() = when (this) {
-    VoiceNotice.CHECKING -> R.string.voice_checking
-    VoiceNotice.PREPARING -> R.string.voice_preparing
-    VoiceNotice.RECORDING -> R.string.voice_recording
-    VoiceNotice.PROCESSING -> R.string.voice_processing
-    VoiceNotice.SAVED -> R.string.voice_saved
-    VoiceNotice.SAVED_CLEANUP_WARNING -> R.string.voice_saved_cleanup_warning
-    VoiceNotice.NOTHING_HEARD -> R.string.voice_nothing_heard
-    VoiceNotice.TIMED_OUT -> R.string.voice_timeout
-    VoiceNotice.INTERRUPTED -> R.string.voice_interrupted
-    VoiceNotice.STORAGE_FAILED -> R.string.voice_storage_failed
-    VoiceNotice.FAILED -> R.string.voice_failed
-    VoiceNotice.FAILED_CLEANUP_WARNING -> R.string.voice_cleanup_failed
-    VoiceNotice.UNAVAILABLE -> R.string.voice_unavailable
 }

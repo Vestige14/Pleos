@@ -27,6 +27,18 @@
             android:foregroundServiceType="microphone" android:stopWithTask="true" />
 
         <activity
+            android:name=".DrivingActivity"
+            android:exported="true"
+            android:label="@string/recording_app_name"
+            android:resizeableActivity="true"
+            android:taskAffinity="app.memoryvault.recording">
+            <meta-data android:name="distractionOptimized" android:value="true" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>

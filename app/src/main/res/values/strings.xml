@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">기억 저장소</string>
+    <string name="recording_app_name">기억 저장소 · 녹음</string>
+    <string name="recording_parked_settings">주차 중 설정</string>
     <string name="voice_recording_channel">메모 녹음 상태</string>
     <string name="voice_ready_channel">주행 메모 시작 버튼</string>
     <string name="voice_result_channel">메모 처리 결과</string>
