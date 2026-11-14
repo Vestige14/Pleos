@@ -2,7 +2,7 @@
 
 기준: 2026-11-14. **내비 옆 정상 분할 패널에서 사용자 버튼→실제 오프라인 녹음→원문 저장→주차 표시·재부팅/재실행 복원을 확인했고, 3단계 구현·필수 검증·독립 검토를 완료하고 중단했다.** 사용자가 내비 유지 조건의 분할 화면을 허용했다. 주차 음성 시작이나 OS 제한 해제 없이 별도 음성 전용 Activity로 기존 서비스를 재사용한다. 4단계는 미착수다.
 
-최신 구현은 `codex/03-recording-panel`의 제품 소스 `43cea47`이며 기준 main은 `d24b7d6`이다. 이번 추가 구현의 원격 게시·main 통합은 별도 승인 전이다. 새 파일·산출물·검증은 [HANDOFF](HANDOFF.md), 일반 실행 절차는 [TESTING](TESTING.md), 설계는 [녹음 패널](superpowers/specs/2026-11-14-recording-panel.md)에 기록한다. 이하 과거 알림 경로의 완료 보류 기록은 당시 이력이며 이번 분할 경로의 결과와 구분한다.
+최신 구현은 `codex/03-recording-panel`의 제품 소스 `43cea47`이며 기준 main은 `d24b7d6`이다. 2026-11-14 사용자가 이번 추가 구현의 main 병합과 기능 브랜치 동시 push를 승인했다. `d24b7d6..4a79edb`를 로컬 main에 fast-forward 병합했으며, 승인 기록만 문서 전용 커밋으로 추가한다. 대상은 `origin/main`과 `origin/codex/03-recording-panel`이고 최종 게시 여부는 원격 Git 값으로 확인한다. 사용자의 명시적 지시에 따라 4단계는 진행하지 않는다. 새 파일·산출물·검증은 [HANDOFF](HANDOFF.md), 일반 실행 절차는 [TESTING](TESTING.md), 설계는 [녹음 패널](superpowers/specs/2026-11-14-recording-panel.md)에 기록한다. 이하 과거 알림 경로의 완료 보류 기록은 당시 이력이며 이번 분할 경로의 결과와 구분한다.
 
 ## 완료 범위와 남은 범위
 
