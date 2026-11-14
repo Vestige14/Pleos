@@ -30,9 +30,11 @@ swift scripts/generate_photo_fixtures.swift .local/photo-fixtures-new
 
 - 전체 사진 허용·거부·철회·재부여를 이번 4단계 수락 범위로 정했다. 현재 Pleos OS는 선택 사진 또는 촬영 GPS만의 독립 토글을 제공하지 않아 해당 실제 조합은 미검증이다. 기존 관련 순수 로직 검사는 실제 OS 검증을 대체하지 않는다.
 - [이슈 #2](https://github.com/chowonbhin/Pleos/issues/2): 기존 Compose UI 테스트의 입력 노드 부재·NoRoot·idle timeout. 임시 진단을 포함한 성공 회차와 제거 후 실패 회차를 모두 기록했다. 원인 미확정이며 사용자 승인으로 이번 게시의 차단 조건에서 제외했다. 테스트와 안전 gate는 유지한다.
-- 이 브랜치에 공유 선택/미리보기/저장·Android 공유 시트, Android AI Worker, 실제 OpenAI 호출은 없다. 다음은 5단계 공유 화면·흐름이며, 최신 후속 실행 지시에 따라 이어 간다.
+- 이 브랜치에 공유 선택/미리보기/저장·Android 공유 시트, Android AI Worker, 실제 OpenAI 호출은 없다. 다음은 5단계 공유 화면·흐름이며, 최신 push 후 중지 지시에 따라 별도 재개 지시를 기다린다.
 - 이번 체크포인트는 첫 릴리즈가 아니다. 버전/태그/Release를 생성하지 않는다.
 
 ## 검증 결과
 
 사진 전용 소스의 빌드 성공·JVM 178개 통과·Lint 오류 0을 확인했다. 기기 전체65메서드는 61성공·4실패 메서드/5실패 이벤트이며 사진 관련 새 검사22개는 통과했다. 실패는 기존 MemoryVaultScreenTest의 NoRoot/ActivityScenario lifecycle 경계로 이슈 #2에 남긴다. 상세 결과와 APK hash는 [인수인계](../HANDOFF.md)에 기록했다. 이전 병렬 조사78개에는 공유13개가 포함돼 있어 이 브랜치의 전체65개와 구분한다. task 사진37파일의 독립 fix1 검토는 I1 썸네일 안전·M1 재시도 ADDRESSED 및 Approved였으며, optional UseKtx 권고는 비차단 후속 항목으로 남았다.
+
+최종 로컬 main 재빌드는 JVM178 및 빌드 성공, 기기65중64성공·1실패였다. 사진 UI 최초 scroll의 NoRoot로 이슈 #2에 추가했다. 최신 APK hash와 두 검증 회차의 차이는 인수인계를 따른다.
