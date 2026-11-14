@@ -1,5 +1,7 @@
 package app.memoryvault.ui
 
+import app.memoryvault.sync.MemoryLinkProgress
+import app.memoryvault.sync.MemoryLinkRuntime
 import app.memoryvault.AppContainer
 import app.memoryvault.DemoConfig
 import app.memoryvault.RepositoryState
@@ -28,6 +30,7 @@ sealed interface DayDraftState {
 
 /** UI dependency boundary; vehicle and recording safety remain owned by the production sources. */
 interface MemoryVaultUi {
+    val aiProgress: StateFlow<MemoryLinkProgress> get() = MemoryLinkProgress.unavailable
     val driveSnapshot: StateFlow<DriveSnapshot>
     val day: Flow<DayDraftState>
     val voiceState: StateFlow<VoiceServiceState>
@@ -50,6 +53,7 @@ class AppUiBridge(
     private val container: AppContainer,
     private val requestVoice: () -> VoiceStartRequest,
 ) : MemoryVaultUi {
+    override val aiProgress = MemoryLinkRuntime.progress
     override val driveSnapshot = container.driveSnapshot
     override val voiceState = container.voiceState
     override val readyNotificationEnabled = container.readyNotificationEnabled

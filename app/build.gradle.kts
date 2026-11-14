@@ -26,6 +26,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     signingConfigs.getByName("debug") {
@@ -34,12 +35,14 @@ android {
 
     buildTypes {
         getByName("debug") {
+            buildConfigField("boolean", "MEMORY_LINK_LOCAL_HTTP", "true")
             // SDK privacy optimization must run; debuggable R8 preserves vendor logger calls.
             isMinifyEnabled = true
             isDebuggable = false
             proguardFiles("vendor-log-protection.pro")
         }
         getByName("release") {
+            buildConfigField("boolean", "MEMORY_LINK_LOCAL_HTTP", "false")
             isMinifyEnabled = true
             isDebuggable = false
             proguardFiles("vendor-log-protection.pro")
@@ -81,6 +84,10 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.4.1")
     implementation("androidx.navigation:navigation-compose:2.8.9")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    implementation("androidx.work:work-runtime-ktx:2.10.5")
+    // Align app/test runtime: Test core 1.7 requires SuspendToFutureAdapter from 1.2.0.
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
+    androidTestImplementation("androidx.work:work-testing:2.10.5")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

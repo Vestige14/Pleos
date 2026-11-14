@@ -116,7 +116,7 @@ class MemoryVaultScreenTest {
         val ui = FixtureUi(DriveState.PARKED)
         compose.setContent { MemoryVaultTheme { MemoryVaultScreen(ui, onRequestPermissions = {}) } }
         compose.onNodeWithText("연결 분석 대기 · 음성 원문").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("  저장된 음성 원문  ").assertIsDisplayed()
+        compose.onNodeWithText("  저장된 음성 원문  ").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("메모 수정").assertDoesNotExist()
         compose.onNodeWithText("메모 추가").performScrollTo().performClick()
         compose.onNodeWithTag("memo-input").performTextInput("  직접 쓴 메모  ")

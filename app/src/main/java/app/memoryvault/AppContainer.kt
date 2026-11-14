@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.util.Size
 import androidx.core.net.toUri
 import androidx.room.Room
+import app.memoryvault.sync.MemoryLinkRuntime
 import app.memoryvault.data.AppDatabase
 import app.memoryvault.data.MemoryRepository
 import app.memoryvault.data.MediaStorePhotoSource
@@ -14,7 +15,8 @@ import app.memoryvault.data.SeedLoader
 import app.memoryvault.domain.DriveState
 import app.memoryvault.domain.VoiceMemoUseCase
 import app.memoryvault.platform.AaosDriveStateSource
-import app.memoryvault.platform.PleosSpeechInput
+import app.memoryvault.platform.capture.CaptureRuntime
+import app.memoryvault.platform.capture.CaptureNote
 import app.memoryvault.platform.DriveSafetyBridge
 import app.memoryvault.platform.readPhotoPermissions
 import app.memoryvault.platform.AndroidPhotoThumbnailRequest
@@ -95,6 +97,13 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
             })
             val seed = appContext.assets.open("seed_day.json").bufferedReader().use { SeedLoader.parse(it.readText()) }
             result.seedIfEmpty(seed)
+            try {
+                CaptureRuntime.recover(appContext) { session ->
+                    database.noteDao().getByVoiceSession(session)?.let { CaptureNote(it.id, it.text, it.capturedAt) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Private capture screen reports a broken index; existing DB stays available. */ }
+            MemoryLinkRuntime.start(appContext, database)
             result
         } catch (failure: Throwable) {
             runCatching { database.close() }
@@ -115,7 +124,7 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
     }
     private val voice = VoiceMemoUseCase(driveState, { id, text, capturedAt ->
         val ready = repository.value as? RepositoryState.Ready ?: error("Storage unavailable")
-        ready.repository.saveVoiceMemo(id, text, capturedAt)
+        ready.repository.saveVoiceMemo(id, text, capturedAt).also { MemoryLinkRuntime.reconcilePendingJobs(appContext) }
     }, driveSafety = driveSafety)
     private val photos = PhotoReviewController(driveSnapshot, { readPhotoPermissions(appContext) }, {
         (repository.value as? RepositoryState.Ready)?.repository?.let { ready ->
@@ -174,7 +183,8 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
 
     internal fun newVoiceController() = VoiceSessionController(
         driveState, storageReadiness, voice, notifications::availability, driveSource::start,
-        speechFactory = { PleosSpeechInput(appContext) }, captureClock = captureClock,
+        speechFactory = { CaptureRuntime.newSpeechInput(appContext) },
+        captureClock = CaptureClock { System.currentTimeMillis() },
     )
 
     internal fun publishVoiceState(state: VoiceServiceState) { mutableVoiceState.value = state }

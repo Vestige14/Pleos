@@ -45,16 +45,38 @@ APK SHA-256도 기록합니다. macOS에서는 `shasum -a 256 <APK>`, 다른 OS�
 
 ## 3. Room·Compose 기기 검사
 
-SETUP의 설치 절차로 제품과 테스트 APK를 동일 전용 기기·현재 사용자에 설치합니다. 실제 발화가 끝나고 마이크 입력이 꺼진 상태에서 공식 콘솔을 **P·0**에 둡니다. OS가 테스트 Activity를 가리는 주행 상태로 시작하지 않습니다.
+현재 통합 시험 APK에는 **135개 메서드·32개 클래스**가 있다. source의 @Test와 실제 시험 APK의 annotation 목록을 대조한 수이며, 전체135개 실행 성공을 뜻하지 않는다.
+
+| 집합 | 클래스 | 메서드 |
+| --- | ---: | ---: |
+| 기존 저장·사진·음성·화면 | 14 | 65 |
+| 공유 | 10 | 33 |
+| AI 동기화·실HTTP 수락 | 4 | 30 |
+| 캡처 저장/UI·SDK 진단 | 4 | 7 |
+| 전체 | 32 | 135 |
+
+캡처7개는 저장/UI5개와 실제 ON_DEVICE SDK 진단2개다. `CaptureExternalPcmProbeTest`의 디지털 무음 terminal 대기는20초 timeout 실패 기록이 남아 있고, `CaptureSyntheticSpeechProbeTest`의 합성 한국어 성공과 구분한다. 두 진단은 실제 SDK에 합성 PCM을 전달하며 사용자 마이크를 자동으로 시작하는 검사는 아니다. 무음 assertion·timeout을 바꾸거나 skip/삭제해서 전체 성공을 만들지 않는다.
+
+**필터 없는 전체 명령을 실행하기 전에** 일반 @Test인 `MemoryLinkTransportAcceptanceTest`의 아래 전제를 준비한다. 상세 새 환경 절차·비밀 없는 서버·정확한 scoped 필터·정상 종료는 [로컬 HTTP fixture 안내](../scripts/fixtures/README.md)에 있다.
+
+- 자기 전용 기기의 정상 주차 **AI 방문 연결 → 연결 설정 열기**에서 저장한 실제 AndroidKeystore 암호화 세션. endpoint는 정확한 HTTP `127.0.0.1:18761` 또는 `localhost:18761`이어야 한다.
+- 그 세션과 같은 개발 토큰을 준비한 호스트의 기존 private `.local/verification/stage6-local-session.secret` 및 [저장소 fixture](../scripts/fixtures/memory_link_transport_server.py). fixture는 토큰을 생성·교체·출력하지 않으며 실제 OpenAI 키는 사용하지 않는다.
+- 루프백18761의 fixture 서버와 정확한 전용 serial의 `reverse tcp:18761 tcp:18761`. 기존 mapping/기기 세션은 임의로 교체하지 않는다.
+
+이 전제가 빠지면 transport 시험은 선행조건/연결 실패로 종료한다. 미준비 상태를 제품 결함으로 단정하거나 시험을 skip하라는 뜻이 아니다. 새 개발자는 자기 전용 환경을 준비하며 기존 검증 기기의 세션 재설정이나 반복 마이크 시험을 요구하지 않는다.
+
+[SETUP](SETUP.md)의 절차로 같은 서명의 제품/시험 APK를 동일 전용 기기·현재 사용자에 데이터 보존 설치한다. 실제 발화가 끝나고 마이크 입력이 꺼진 상태에서 공식 콘솔을 **P·0**에 둔다. OS가 테스트 Activity를 가리는 주행 상태로 시작하지 않는다. 준비와 실행 범위를 기록한 뒤 필요한 검증 경계에서 다음 전체 명령을 사용한다.
 
 ```sh
 "$MV_ADB" -s "$MV_SERIAL" shell am instrument --user "$MV_USER_ID" -w -r \
   app.memoryvault.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-현재 사진 브랜치의 테스트는 **기존43개 + 사진22개 = 65개**입니다. `OK (65 tests)`와 개별 실패 유무를 확인합니다. `am instrument`의 셸 종료 코드나 마지막 `INSTRUMENTATION_CODE` 하나로 성공을 판정하지 않습니다. 테스트는 in-memory DB 또는 테스트가 만든 UUID 파일 DB를 사용하며 제품의 저장 메모를 지우는 검사가 아닙니다. 실제 STT 마이크를 자동으로 시작하지 않습니다.
+개별 메서드 status와 최종 JUnit 요약을 함께 확인한다. 성공일 때만 `OK (135 tests)`로 판독하며, `am instrument`의 셸 종료 코드나 마지막 `INSTRUMENTATION_CODE` 하나로 성공을 판단하지 않는다. 시험은 in-memory 또는 UUID 전용 파일 DB를 사용하고 제품 저장 메모를 지우지 않는다. HTTP 수락은 기존 세션을 읽기만 하며 원음·사진을 전송하지 않는다.
 
-변경 영향이 UI에 한정되면 다음처럼 관련 그룹을 실행할 수 있습니다. 전체 수락 검사를 대체할 때는 해당 경계의 필수 검사 범위를 먼저 확인합니다.
+**검증 이력:** 필터 없는 통합134개 회차는132PASS/2FAIL,72.685초였다. 실패는 무음20초 timeout과 UI 원문 노드의 표시 영역 가정이었다. UI 시험에 원문 자체로 정상 스크롤하는 동작을 추가하고 신규 실제HTTP1개를 더한 뒤, 지정2개만 단1회2/2PASS,2.181초로 확인했다. 전체135개를 새로 실행한 것은 아니며 앞선132개와 후속2개를 합쳐 전체 GREEN으로 보고하지 않는다. 최신 수락 범위는 [HANDOFF](HANDOFF.md)와 [AI 검증 안내](features/openai-sync.md)를 따른다.
+
+변경 영향이 UI에 한정되면 다음처럼 관련 그룹을 실행할 수 있다. 단계/릴리즈 전체 검증은 그 경계에서 요구한 전체 범위를 선택하고 입력·필터·실패를 그대로 보고한다. focused 성공이 필요한 전체 수락을 자동으로 대체하지 않는다.
 
 ```sh
 "$MV_ADB" -s "$MV_SERIAL" shell am instrument --user "$MV_USER_ID" -w -r \
@@ -62,7 +84,7 @@ SETUP의 설치 절차로 제품과 테스트 APK를 동일 전용 기기·현�
   app.memoryvault.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-실패하면 실패 메서드·지점과 당시 P/Activity 상태를 먼저 확인합니다. 현재 기존 UI 검사의 노드 부재·NoRoot·idle timeout 및 ActivityScenario lifecycle 실패가 회차마다 다른 위치에서 재발합니다. [이슈 #2](https://github.com/chowonbhin/Pleos/issues/2)에 조사 지점과 사진 전용65개 실행 결과를 기록했으며, 사용자 승인으로 이번 게시 차단 조건에서 제외했습니다. 원인 해결이나 전체 GREEN을 뜻하지 않습니다. 재발 시 관련 검사만 분리하고 첫 클릭 직후의 UI·lifecycle을 좁게 관측합니다. 무작정 전체 검사를 반복하거나 안전 gate를 완화하지 않습니다.
+실패하면 메서드·지점과 당시 P/Activity/서버 준비 상태를 먼저 확인한다. 기존 UI의 노드 부재·NoRoot·idle timeout/ActivityScenario lifecycle 실패는 [이슈 #2](https://github.com/chowonbhin/Pleos/issues/2)로 유지한다. 최신134개 회차에서 NoRoot가 관측되지 않은 사실을 근본 원인 해결로 확대하지 않는다. 과거 사진 전용65개 결과와 현재135개를 구분하고, 새 결함에 이전 게시 예외를 넓히지 않는다. 전체 검사를 무작정 반복하거나 안전 gate·assertion을 완화하지 않는다.
 
 ## 4. 공식 콘솔과 최초 권한 준비
 

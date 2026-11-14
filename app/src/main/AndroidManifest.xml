@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Optional, explicit parked setup. No background location permission or updates. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -11,13 +14,15 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
-    <!-- ON_DEVICE only; no SDK registration or network operation in this stage. -->
-    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <!-- ON_DEVICE speech stays local; only stored text uses the AI backend. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-feature android:name="android.hardware.type.automotive" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
         android:name=".MemoryVaultApp"
+        android:usesCleartextTraffic="false"
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -26,6 +31,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MemoryVault">
         <uses-library android:name="android.car" android:required="false" />
+        <activity android:name=".sync.ui.MemoryLinkSetupActivity" android:exported="false" />
+        <activity android:name=".platform.capture.CaptureReviewActivity" android:exported="false" />
         <receiver android:name=".service.VoiceNotificationReceiver" android:exported="false" />
         <service android:name=".service.VoiceMemoService" android:exported="false"
             android:foregroundServiceType="microphone" android:stopWithTask="true" />
@@ -42,6 +49,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".share.ui.ShareFlowActivity"
+            android:exported="false"
+            android:resizeableActivity="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

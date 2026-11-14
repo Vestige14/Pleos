@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -60,6 +61,12 @@ interface NoteDao {
 
 @Dao
 interface NoteLinkDao {
+    @Query("SELECT * FROM note_visit_links WHERE noteId = :noteId")
+    suspend fun getForNote(noteId: Long): List<NoteVisitLink>
+
+    @Query("DELETE FROM note_visit_links WHERE noteId = :noteId AND origin = 'AI' AND status = 'SUGGESTED'")
+    suspend fun deleteAiSuggestions(noteId: Long)
+
     @Insert
     suspend fun insert(link: NoteVisitLink)
 
@@ -78,6 +85,15 @@ interface NoteLinkDao {
 
 @Dao
 interface AiLinkDao {
+    @Query("SELECT * FROM ai_link_jobs WHERE jobId = :jobId")
+    suspend fun getJob(jobId: String): AiLinkJob?
+
+    @Update
+    suspend fun updateJob(job: AiLinkJob)
+
+    @Query("SELECT * FROM ai_link_jobs ORDER BY jobId")
+    fun observeJobs(): Flow<List<AiLinkJob>>
+
     @Insert
     suspend fun insertJob(job: AiLinkJob)
 

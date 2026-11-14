@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="share_open_day">이날 공유하기</string>
+    <string name="share_title">공유 항목 선택</string>
+    <string name="share_privacy">고른 방문·사진·공유 설명만 담아요. 개인 메모와 주소·좌표는 포함하지 않아요.</string>
+    <string name="share_photo_pixels">사진 속 얼굴·글씨는 그대로 보이니 미리 확인해 주세요.</string>
+    <string name="share_include_visit">방문 공유에 포함</string>
+    <string name="share_photo_choice">사진 %1$d 공유</string>
+    <string name="share_caption">공유용 설명</string>
+    <string name="share_caption_help">개인 메모는 자동으로 복사하지 않아요.</string>
+    <string name="share_preview">미리보기</string>
+    <string name="share_preview_title">공유되는 내용만 보여요</string>
+    <string name="share_back_select">선택으로 돌아가기</string>
+    <string name="share_back_day">하루 초안으로</string>
+    <string name="share_export">이미지 저장 · 공유</string>
+    <string name="share_no_visits">공유할 방문을 하나 이상 골라 주세요.</string>
+    <string name="share_saving_selection">선택을 저장하고 있어요.</string>
+    <string name="share_selection_failed">선택을 저장하지 못했어요. 다시 저장한 뒤 미리볼 수 있어요.</string>
+    <string name="share_retry">다시 저장</string>
+    <string name="share_park_required">주차 후 하루 초안에서 공유를 다시 열어 주세요.</string>
+    <string name="share_loading">공유할 기록을 준비하고 있어요.</string>
+    <string name="share_exporting">공유 이미지를 만들고 있어요.</string>
+    <string name="share_saved">공유 이미지를 저장했어요. 사진 앱의 ‘기억저장소’ 폴더에서 확인해 주세요.</string>
+    <string name="share_saved_receipt_unavailable">이미지는 저장했어요. 저장 안내를 보관하지 못했으니 사진 앱의 ‘기억저장소’ 폴더를 확인해 주세요.</string>
+    <string name="share_photo_failed">사진을 읽을 수 없어요. 하루 초안에서 사진 권한과 선택을 확인해 주세요.</string>
+    <string name="share_too_large">이미지가 너무 커요. 사진이나 설명을 줄여 다시 시도해 주세요.</string>
+    <string name="share_render_failed">이미지를 만들지 못했어요. 사진을 확인하고 다시 시도해 주세요.</string>
+    <string name="share_storage_failed">이미지를 저장하지 못했어요. 저장 공간을 확인하고 다시 시도해 주세요.</string>
+    <string name="share_saved_receipt_title">최근 저장한 이미지</string>
+    <string name="share_saved_receipt_location">사진 앱의 ‘기억저장소’ 폴더나 파일 앱의 Pictures/기억저장소 폴더를 확인해 주세요.</string>
+</resources>

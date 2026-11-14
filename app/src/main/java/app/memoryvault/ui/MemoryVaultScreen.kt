@@ -41,6 +41,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.memoryvault.sync.MemoryLinkProgress
+import app.memoryvault.platform.capture.CaptureEntry
+import app.memoryvault.sync.ui.MemoryLinkEntry
+import app.memoryvault.sync.ui.MemoryLinkNoteStatus
+import kotlinx.coroutines.flow.StateFlow
 import app.memoryvault.DemoConfig
 import app.memoryvault.R
 import app.memoryvault.TypedMemoResult
@@ -85,6 +90,7 @@ fun MemoryVaultScreen(
     onRequestPermissions: () -> Unit,
     permissionSummary: Int = R.string.voice_permissions_needed,
     onRequestPhotoPermissions: () -> Unit = {},
+    onShareDay: () -> Unit = {},
 ) {
     val snapshot by ui.driveSnapshot.collectAsStateWithLifecycle()
     val voice by ui.voiceState.collectAsStateWithLifecycle()
@@ -135,6 +141,11 @@ fun MemoryVaultScreen(
             if (snapshot.state == DriveState.PARKED) {
                 Text(stringResource(R.string.day_draft), style = MaterialTheme.typography.headlineMedium)
                 Text(stringResource(R.string.demo_reference, DemoConfig.DEMO_DATE.toString(), DemoConfig.DEMO_ZONE.id))
+                app.memoryvault.share.ui.ShareSavedReceiptNotice(ui.driveSnapshot, DemoConfig.DEMO_DATE.toString())
+                OutlinedButton(onClick = { if (photosAllowed()) onShareDay() },
+                    modifier = Modifier.heightIn(min = 64.dp).testTag("open-share")) {
+                    Text(stringResource(R.string.share_open_day))
+                }
                 ParkedSetup(
                     readyEnabled, permissionSummary,
                     onPermissions = { if (ui.driveSnapshot.value.state == DriveState.PARKED) onRequestPermissions() },
@@ -147,6 +158,8 @@ fun MemoryVaultScreen(
                     onPermissions = { if (photosAllowed()) onRequestPhotoPermissions() },
                     onRefresh = { if (photosAllowed()) ui.refreshPhotos() },
                 )
+                MemoryLinkEntry(ui.driveSnapshot, ui.aiProgress)
+                CaptureEntry(ui.driveSnapshot)
                 typedNotice?.let { Text(stringResource(it), modifier = Modifier.testTag("typed-result")) }
                 if (editor.visitId != null && editor.text.isNotEmpty() && !editor.isOpen && editor.pendingTarget == null) {
                     OutlinedButton(
@@ -339,7 +352,7 @@ private fun DayContent(
     draft.pendingNotes.forEach { note ->
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                MemoContent(note, emptyList(), editingEnabled, onEdit)
+                MemoContent(note, emptyList(), editingEnabled, onEdit, ui.aiProgress)
             }
         }
     }
@@ -349,7 +362,7 @@ private fun DayContent(
                 Text(card.visit.placeName, style = MaterialTheme.typography.titleLarge)
                 Text("${formatTime(card.visit.arrivedAt)} – ${formatTime(card.visit.leftAt)}")
                 if (card.notes.isEmpty()) Text(stringResource(R.string.memo_empty))
-                card.notes.forEach { MemoContent(it, card.noteLinks, editingEnabled, onEdit) }
+                card.notes.forEach { MemoContent(it, card.noteLinks, editingEnabled, onEdit, ui.aiProgress) }
                 if (photoAccess) PhotoList(card.photos, photoActionsEnabled, onPhotoDecision, ui, thumbnailEpoch)
                 else Text(stringResource(R.string.photo_access_card_hidden))
                 OutlinedButton(onClick = { onAdd(card.visit.id) }, enabled = editingEnabled, modifier = Modifier.heightIn(min = 64.dp)) {
@@ -361,9 +374,10 @@ private fun DayContent(
 }
 
 @Composable
-private fun MemoContent(note: Note, links: List<NoteVisitLink>, editingEnabled: Boolean, onEdit: (Note) -> Unit) {
+private fun MemoContent(note: Note, links: List<NoteVisitLink>, editingEnabled: Boolean, onEdit: (Note) -> Unit, aiProgress: StateFlow<MemoryLinkProgress>) {
     val presentation = presentationOf(note, links)
-    Text(stringResource(when (presentation) {
+    if (presentation == NotePresentation.VOICE_PENDING) MemoryLinkNoteStatus(note.id, aiProgress)
+    else Text(stringResource(when (presentation) {
         NotePresentation.TYPED -> R.string.memo_typed
         NotePresentation.VOICE_PENDING -> R.string.memo_voice_pending
         NotePresentation.VOICE_SUGGESTED -> R.string.memo_voice_suggested

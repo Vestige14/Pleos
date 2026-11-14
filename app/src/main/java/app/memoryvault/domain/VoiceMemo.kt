@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
@@ -23,6 +24,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 
 enum class VoiceFailure { RECOGNITION, CAPTURE, STORAGE }
 
@@ -104,13 +106,16 @@ class VoiceMemoUseCase(
                 failure = thrown
             }
 
+            val discardFailure = if (failure is CancellationException || outcome is VoiceMemoOutcome.Cancelled) {
+                withContext(NonCancellable) { runCatching { input.discardIncomplete() }.exceptionOrNull() }
+            } else null
             val cleanup = releaseInput(input)
             if (failure == null) failure = cleanup.propagate
             val result = when {
                 failure is CancellationException -> VoiceMemoOutcome.Cancelled(VoiceCancelReason.CALLER)
                 failure != null -> VoiceMemoOutcome.Failed(VoiceFailure.RECOGNITION)
                 else -> checkNotNull(outcome)
-            }.withCleanupFailure(cleanup.failed)
+            }.withCleanupFailure(cleanup.failed || discardFailure != null)
             mutableState.value = VoiceState.Result(result)
             failure?.let { throw it }
             return result
@@ -140,13 +145,17 @@ class VoiceMemoUseCase(
             val work = async(start = CoroutineStart.UNDISPATCHED) {
                 session.attach(currentCoroutineContext().job)
                 checkCancellation(session, acceptedGeneration)
+                input.bindSession(sessionId, capturedAt)
                 when (val recognition = awaitFinal(input)) {
                     is Recognition.Unsuccessful -> recognition.outcome
                     is Recognition.Final -> {
                         checkCancellation(session, acceptedGeneration)
                         mutableState.value = VoiceState.Processing
                         try {
-                            val noteId = saveVoiceMemo(sessionId, recognition.text, capturedAt)
+                            val noteId = input.persistFinal(recognition.text) {
+                                checkCancellation(session, acceptedGeneration)
+                                saveVoiceMemo(sessionId, recognition.text, capturedAt)
+                            }
                             checkCancellation(session, acceptedGeneration)
                             VoiceMemoOutcome.Saved(noteId)
                         } catch (cancelled: CancellationException) {
@@ -213,7 +222,7 @@ class VoiceMemoUseCase(
                             captureEnded.set(true)
                             mutableState.value = VoiceState.Processing
                         }
-                    }.firstOrNull { it is SpeechEvent.Final || it == SpeechEvent.Error }
+                    }.firstOrNull { it is SpeechEvent.Final || it == SpeechEvent.Error || it == SpeechEvent.CaptureError }
                     when (event) {
                         is SpeechEvent.Final -> if (event.text.isBlank()) {
                             Recognition.Unsuccessful(VoiceMemoOutcome.NothingHeard())
@@ -221,6 +230,7 @@ class VoiceMemoUseCase(
                             Recognition.Final(event.text)
                         }
                         SpeechEvent.Error -> Recognition.Unsuccessful(VoiceMemoOutcome.Failed(VoiceFailure.RECOGNITION))
+                        SpeechEvent.CaptureError -> Recognition.Unsuccessful(VoiceMemoOutcome.Failed(VoiceFailure.CAPTURE))
                         else -> Recognition.Unsuccessful(VoiceMemoOutcome.NothingHeard())
                     }
                 } finally {

@@ -1,5 +1,6 @@
 package app.memoryvault
 
+import android.content.Intent
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -34,7 +35,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MemoryVaultTheme {
                 MemoryVaultScreen(ui, onRequestPermissions = ::requestVoicePermissions, permissionSummary = permissionSummary,
-                    onRequestPhotoPermissions = ::requestPhotoPermissions)
+                    onRequestPhotoPermissions = ::requestPhotoPermissions, onShareDay = ::openShareDay)
             }
         }
     }
@@ -49,6 +50,12 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         container.onPhotoStop()
         super.onStop()
+    }
+
+    private fun openShareDay() {
+        if (container.driveSnapshot.value.state != DriveState.PARKED) return
+        startActivity(Intent(this, app.memoryvault.share.ui.ShareFlowActivity::class.java)
+            .putExtra(app.memoryvault.share.ui.ShareFlowActivity.EXTRA_DATE, DemoConfig.DEMO_DATE.toString()))
     }
 
     private fun requestPhotoPermissions() {
