@@ -57,6 +57,8 @@ class PcmSpeechInput(
     private var submitted = false
     private var terminalDelivered = false
     private var pendingTerminal: SpeechEvent? = null
+    private var segmentResult: CompletableDeferred<SpeechEvent>? = null
+    private var engineGeneration = 0L
     private var cleanupFailure: Throwable? = null
 
     override fun bindSession(sessionId: String, capturedAt: Long) = synchronized(lock) {
@@ -70,21 +72,8 @@ class PcmSpeechInput(
             if (consumed || closed) false else { consumed = true; sink = channel; true }
         }
         if (!owns) { close(); return@callbackFlow }
-        val ready = CompletableDeferred<Boolean>()
         val id = synchronized(lock) { checkNotNull(sessionId) { "Capture session unbound" } }
-        try {
-            synchronized(lock) {
-                if (!closed) {
-                    val acquired = engineFactory()
-                    engine = acquired
-                    acquired.initialize(object : PcmRecognitionEngine.Listener {
-                        override fun final(text: String) = receiveTerminal(SpeechEvent.Final(text))
-                        override fun failed() = receiveTerminal(SpeechEvent.Error)
-                    }, { ready.complete(true) }, { ready.complete(false) })
-                }
-            }
-        } catch (_: Exception) { ready.complete(false) }
-        catch (_: LinkageError) { ready.complete(false) }
+        val ready = initializeEngine()
 
         launch(io) {
             var acquired: PcmSource? = null
@@ -133,21 +122,51 @@ class PcmSpeechInput(
                 stopSource()
                 deliver(SpeechEvent.RecognitionEnded)
                 val pcm = store.readPcm(id)
-                withContext(engineDispatcher) {
-                    synchronized(lock) {
-                        if (!closed) {
-                            submitting = true
-                            try {
-                                engine!!.sendAudio(pcm)
-                                engine!!.completeAudioSend()
-                                submitted = true
-                            } catch (_: Exception) { pendingTerminal = SpeechEvent.Error; submitted = true }
-                            catch (_: LinkageError) { pendingTerminal = SpeechEvent.Error; submitted = true }
-                            finally { submitting = false }
-                            pendingTerminal?.let(::deliverTerminal)
+                val ranges = PcmUtteranceRanges.split(pcm)
+                val transcripts = mutableListOf<String>()
+                for ((index, range) in ranges.withIndex()) {
+                    currentCoroutineContext().ensureActive()
+                    if (index > 0) {
+                        val nextReady = withContext(engineDispatcher) {
+                            synchronized(lock) {
+                                // Invalidate the previous listener before close can emit a late result.
+                                engineGeneration++
+                                val previous = engine.also { engine = null }
+                                try { previous?.close() }
+                                catch (cancelled: CancellationException) { throw cancelled }
+                                catch (failure: Exception) { rememberCleanupFailure(failure) }
+                                catch (failure: LinkageError) { rememberCleanupFailure(failure) }
+                                if (cleanupFailure != null) CompletableDeferred(false) else initializeEngine()
+                            }
+                        }
+                        if (!nextReady.await()) { deliverTerminal(SpeechEvent.Error); return@launch }
+                    }
+                    val completed = CompletableDeferred<SpeechEvent>()
+                    withContext(engineDispatcher) {
+                        synchronized(lock) {
+                            if (!closed) {
+                                segmentResult = completed
+                                submitting = true
+                                try {
+                                    engine!!.sendAudio(if (ranges.size == 1) pcm else pcm.copyOfRange(range.first, range.last + 1))
+                                    engine!!.completeAudioSend()
+                                    submitted = true
+                                } catch (_: Exception) { pendingTerminal = SpeechEvent.Error; submitted = true }
+                                catch (_: LinkageError) { pendingTerminal = SpeechEvent.Error; submitted = true }
+                                finally { submitting = false }
+                                pendingTerminal?.let { completed.complete(it) }
+                            }
                         }
                     }
+                    when (val event = completed.await()) {
+                        is SpeechEvent.Final -> {
+                            if (ranges.size > 1 && event.text.isBlank()) { deliverTerminal(SpeechEvent.Error); return@launch }
+                            transcripts += event.text
+                        }
+                        else -> { deliverTerminal(SpeechEvent.Error); return@launch }
+                    }
                 }
+                deliverTerminal(SpeechEvent.Final(transcripts.joinToString(" ")))
                 awaitCancellation() // Keep the bounded late-final listener until the coordinator completes.
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { deliver(SpeechEvent.CaptureError) }
@@ -177,13 +196,35 @@ class PcmSpeechInput(
     override fun cancel() { teardown(); synchronized(lock) { cleanupFailure }?.let { throw it } }
     override fun close() = cancel()
 
-    private fun receiveTerminal(event: SpeechEvent) = synchronized(lock) {
-        if (closed || terminalDelivered || (!submitting && !submitted)) return@synchronized
-        if (pendingTerminal == null) pendingTerminal = event
-        if (submitted && !submitting) deliverTerminal(checkNotNull(pendingTerminal))
+    private fun initializeEngine(): CompletableDeferred<Boolean> {
+        val ready = CompletableDeferred<Boolean>()
+        try {
+            synchronized(lock) {
+                if (closed) { ready.complete(false); return ready }
+                val generation = ++engineGeneration
+                submitting = false; submitted = false; pendingTerminal = null; segmentResult = null
+                val acquired = engineFactory()
+                engine = acquired
+                acquired.initialize(object : PcmRecognitionEngine.Listener {
+                    override fun final(text: String) = receiveTerminal(SpeechEvent.Final(text), generation)
+                    override fun failed() = receiveTerminal(SpeechEvent.Error, generation)
+                }, { ready.complete(true) }, { ready.complete(false) })
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { ready.complete(false) }
+        catch (_: LinkageError) { ready.complete(false) }
+        return ready
     }
-    private fun deliverTerminal(event: SpeechEvent) {
+
+    private fun receiveTerminal(event: SpeechEvent, generation: Long) = synchronized(lock) {
+        if (closed || terminalDelivered || generation != engineGeneration || (!submitting && !submitted)) return@synchronized
+        if (pendingTerminal == null) pendingTerminal = event
+        if (submitted && !submitting) segmentResult?.complete(checkNotNull(pendingTerminal))
+        Unit
+    }
+    private fun deliverTerminal(event: SpeechEvent) = synchronized(lock) {
         if (!terminalDelivered && !closed) { terminalDelivered = true; sink?.trySend(event) }
+        Unit
     }
     private fun deliver(event: SpeechEvent) = synchronized(lock) { if (!closed) sink?.trySend(event); Unit }
     private fun rememberCleanupFailure(failure: Throwable) = synchronized(lock) { if (cleanupFailure == null) cleanupFailure = failure }

@@ -15,7 +15,13 @@ class AndroidPcmRecognitionEngine(context: Context) : PcmRecognitionEngine {
     private val sdk = SpeechToText(context.applicationContext, Mode.ON_DEVICE)
     private val handler = Handler(Looper.getMainLooper())
     private var result: ResultListener? = null
-    private var closed = false
+    private val cleanup = PcmEngineCleanup(
+        stop = { sdk.stop() },
+        removeListener = { result?.let(sdk::removeListener) },
+        release = { sdk.release() },
+        clear = { result = null; handler.removeCallbacksAndMessages(null) },
+    )
+    private val closed: Boolean get() = cleanup.closed
     private var initialized = false
 
     override fun initialize(listener: PcmRecognitionEngine.Listener, onReady: () -> Unit, onFailure: () -> Unit) {
@@ -26,7 +32,11 @@ class AndroidPcmRecognitionEngine(context: Context) : PcmRecognitionEngine {
                     try {
                         sdk.setLocale(Locale.KOREA)
                         val bridge = object : ResultListener {
-                            override fun onUpdated(stt: String, completed: Boolean) { if (completed) dispatch { if (!closed) listener.final(stt) } }
+                            override fun onUpdated(stt: String, completed: Boolean) {
+                                if (completed) dispatch {
+                                    if (!closed) { cleanup.completed(); listener.final(stt) }
+                                }
+                            }
                             override fun onError(errorType: ErrorType) = dispatch { if (!closed) listener.failed() }
                             override fun onReady() = Unit
                             override fun onStartedRecognition() = Unit // SDK processing is not microphone capture.
@@ -47,18 +57,7 @@ class AndroidPcmRecognitionEngine(context: Context) : PcmRecognitionEngine {
 
     override fun sendAudio(pcm: ByteArray) { check(!closed && initialized); sdk.sendAudio(pcm) }
     override fun completeAudioSend() { check(!closed && initialized); sdk.completeAudioSend() }
-    override fun close() {
-        if (closed) return
-        closed = true
-        val failures = listOfNotNull(
-            runCatching { sdk.stop() }.exceptionOrNull(),
-            runCatching { result?.let(sdk::removeListener) }.exceptionOrNull(),
-            runCatching { sdk.release() }.exceptionOrNull(),
-        )
-        result = null
-        handler.removeCallbacksAndMessages(null)
-        failures.firstOrNull()?.let { throw it }
-    }
+    override fun close() = cleanup.close()
     private fun dispatch(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else handler.post { block() }
     }
