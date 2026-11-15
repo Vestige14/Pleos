@@ -277,7 +277,7 @@ Ruling: 사진 내용 기반 다중 기억 연결은 7단계로 이관하고 6�
 루트 `AGENTS.md`, `README.md`와 **`docs/` 아래 모든 Markdown·PDF의 실제 내용**을 읽습니다. 파일 목록이나 요약으로 대체하지 않습니다. 도구 제약으로 읽지 못한 파일·범위는 명시하고 해당 요구를 추측하지 않습니다.
 
 1. 이 문서, [개발 상태](development-status.md), [SETUP](SETUP.md), [TESTING](TESTING.md): 최신 결정과 현재 실행 절차.
-2. [원본 PRD 7쪽](%E1%84%80%E1%85%B5%E1%84%8B%E1%85%A5%E1%86%A8%20%E1%84%8C%E1%85%A5%E1%84%8C%E1%85%A1%E1%86%BC%E1%84%89%E1%85%A9%20%E1%84%83%E1%85%A6%E1%84%86%E1%85%A9%20PRD.pdf), [v1](2026-11-13-memory-vault-demo.md), [v2](2026-11-13-memory-vault-demo-v2.md): 제품 목적과 원래 계약.
+2. [원본 PRD 7쪽](%EA%B8%B0%EC%96%B5%20%EC%A0%80%EC%9E%A5%EC%86%8C%20%EB%8D%B0%EB%AA%A8%20PRD.pdf), [v1](2026-11-13-memory-vault-demo.md), [v2](2026-11-13-memory-vault-demo-v2.md): 제품 목적과 원래 계약.
 3. [v3 OpenAI 추가안](2026-11-13-memory-vault-demo-v3-openai-offline-addon.md), [v4 로드맵](2026-11-13-memory-vault-development-roadmap-v4.md): 원문 우선 저장·방문 연결과 1~8단계.
 4. [설계 검토](superpowers/specs/2026-11-13-memory-vault-demo-review-design-v2.md), [상세 구현 계획](superpowers/plans/2026-11-13-memory-vault-demo-plan-v2.md): 세부 수락 기준과 변경 이유.
 5. [환경 구성 기록](environment/pleos-memory-vault-v4.md), [플랫폼 실측 기록](environment/mv-02-platform-spikes.md): 과거 실험의 출처·한계·운영 기록. 옛 probe 명령은 현재 제품 명령이 아닙니다.
