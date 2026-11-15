@@ -94,9 +94,14 @@ class PcmSpeechInputTest {
         assertEquals(CaptureState.STT_FAILED, store.findBySession("s")!!.state)
     }
 
-    @Test fun cancelAndUnknownDeleteOnlyUnfinishedOwnSessionAndLateReadyCannotRestart() = runTest {
+    @Test fun explicitCancelAfterUnknownDeletesOnlyOwnUnfinishedSessionAndLateReadyCannotRestart() = runTest {
         for (unknown in listOf(false, true)) {
             val store = PrivateCaptureStore(temporary.newFolder())
+            val committed = VoiceMemoUseCase(MutableStateFlow(DriveState.DRIVING), { _, _, _ -> 77L })
+            assertEquals(VoiceMemoOutcome.Saved(77L), committed.record("keep", 98L,
+                PcmSpeechInput(store, { Source(listOf(byteArrayOf(7, 8))) }, { Engine() },
+                    io = StandardTestDispatcher(testScheduler))))
+            assertArrayEquals(byteArrayOf(7, 8), store.readPcm("keep"))
             val source = Source(listOf(byteArrayOf(1, 2)), waitForStop = true)
             val engine = Engine()
             val drive = MutableStateFlow(DriveState.DRIVING)
@@ -105,15 +110,22 @@ class PcmSpeechInputTest {
             val input = PcmSpeechInput(store, { source }, { engine }, io = StandardTestDispatcher(testScheduler))
             val result = async { voice.record("s", 99, input) }
             runCurrent()
-            if (unknown) drive.value = DriveState.UNKNOWN else voice.cancel()
+            if (unknown) {
+                drive.value = DriveState.UNKNOWN
+                runCurrent()
+                assertFalse("Vehicle uncertainty cannot cancel a user-started capture", result.isCompleted)
+                assertNotNull("An unfinished capture is not discarded by vehicle state", store.findBySession("s"))
+            }
+            voice.cancel()
             runCurrent()
-            assertEquals(VoiceMemoOutcome.Cancelled(if (unknown) VoiceCancelReason.UNKNOWN else VoiceCancelReason.USER), result.await())
+            assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER), result.await())
             engine.ready!!(); engine.callback!!.final("late")
             runCurrent()
             assertEquals(1, source.starts)
             assertEquals(1, source.closes)
             assertEquals(0, saves)
             assertNull(store.findBySession("s"))
+            assertArrayEquals(byteArrayOf(7, 8), store.readPcm("keep"))
         }
     }
 

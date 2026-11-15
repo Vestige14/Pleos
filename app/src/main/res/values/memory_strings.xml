@@ -2,7 +2,7 @@
 <resources>
     <string name="memory_review_title">기억 연결</string>
     <string name="memory_review_privacy">사진은 메타데이터를 뺀 이미지로만 분석해요. 기억 연결에는 원문과 날짜가 맞는 최소 후보를 전송하며, 원음은 보내지 않아요. 연결과 개인 원문은 공유 이미지에 자동으로 들어가지 않아요.</string>
-    <string name="memory_back">하루 초안으로 돌아가기</string>
+    <string name="memory_back">기록으로 돌아가기</string>
     <string name="memory_review_locked">주차 상태에서 열어 주세요. 출발하거나 화면을 떠나면 검토가 잠기며, 주차 후 직접 다시 열 수 있어요.</string>
     <string name="memory_review_open">기억 연결 열기</string>
     <string name="memory_working">연결 준비·분석 중</string>

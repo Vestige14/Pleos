@@ -7,6 +7,10 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,6 +24,7 @@ import app.memoryvault.ui.MemoryVaultTheme
 
 class MainActivity : ComponentActivity() {
     private val container get() = (application as MemoryVaultApp).container
+    private var openingDrivingPanel = false
     private var permissionSummary by mutableStateOf(R.string.voice_permissions_needed)
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         refreshPermissionSummary()
@@ -31,6 +36,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                container.driveSnapshot.collect { snapshot ->
+                    if (snapshot.state == DriveState.DRIVING && !openingDrivingPanel) {
+                        openingDrivingPanel = true
+                        startActivity(Intent(this@MainActivity, DrivingActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                        finish()
+                    }
+                }
+            }
+        }
         val ui = AppUiBridge(container) { VoiceMemoService.requestStart(this) }
         setContent {
             MemoryVaultTheme {
@@ -55,7 +72,7 @@ class MainActivity : ComponentActivity() {
     private fun openShareDay() {
         if (container.driveSnapshot.value.state != DriveState.PARKED) return
         startActivity(Intent(this, app.memoryvault.share.ui.ShareFlowActivity::class.java)
-            .putExtra(app.memoryvault.share.ui.ShareFlowActivity.EXTRA_DATE, DemoConfig.DEMO_DATE.toString()))
+            .putExtra(app.memoryvault.share.ui.ShareFlowActivity.EXTRA_DATE, container.recordDate.value))
     }
 
     private fun requestPhotoPermissions() {

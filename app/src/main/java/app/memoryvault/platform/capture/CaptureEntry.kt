@@ -8,11 +8,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import app.memoryvault.domain.DriveState
+import app.memoryvault.R
 import app.memoryvault.platform.DriveSnapshot
 import kotlinx.coroutines.flow.StateFlow
 
@@ -29,6 +31,6 @@ fun CaptureEntry(drive: StateFlow<DriveSnapshot>) {
                 current.state == DriveState.PARKED && current.invalidationGeneration == generation) {
                 context.startActivity(Intent(context, CaptureReviewActivity::class.java))
             }
-        }, modifier = Modifier.heightIn(min = 64.dp)) { Text("원음 · STT 기록 확인") }
+        }, modifier = Modifier.heightIn(min = 64.dp)) { Text(stringResource(R.string.p2_voice_records)) }
     }
 }

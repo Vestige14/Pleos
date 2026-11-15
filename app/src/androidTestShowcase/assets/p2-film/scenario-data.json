@@ -1,0 +1,89 @@
+{
+  "synthetic": true,
+  "photo_policy": "합성 시연 이미지이며 해당 업소에서 촬영한 실제 사진이 아님",
+  "audio_policy": "사용자 직접 녹음. 기존 합성 PCM/TTS를 실제 발화로 사용하지 않음",
+  "scenarios": [
+    {
+      "id": "father-son",
+      "title": "너를 생각했던 날들",
+      "place": "더현대 서울",
+      "date": "2026-05-15",
+      "first_voice": "아들이 요즘 공룡을 좋아하는데, 이번에는 내가 고른 걸 좋아했으면 좋겠네",
+      "next_day_voice": "포장을 뜯자마자 이름을 붙였다. 잘 때도 옆에 두더라",
+      "image": "dinosaur-gift.png",
+      "share_message": "이 차를 타면서 너를 생각했던 날들이야",
+      "related": "family-day",
+      "future_transition": "시간이 흘러, 차를 물려주는 날",
+      "recipient": "아들 B",
+      "ownership_notice": "차량 소유권과 개인 기록은 별개이며 선택한 기억만 공유됩니다."
+    },
+    {
+      "id": "family-day",
+      "title": "바다에서 한참 놀았어요",
+      "date": "2026-11-08",
+      "visits": [
+        {
+          "name": "26호까치할머니손칼국수",
+          "time": "12:00–13:10",
+          "image": "noodles.png",
+          "shared": true
+        },
+        {
+          "name": "방아머리해변",
+          "time": "13:40–14:50",
+          "image": "beach.png",
+          "shared": true,
+          "caption": "바다에서 한참 놀았어요"
+        },
+        {
+          "name": "발리다",
+          "time": "15:10–16:00",
+          "image": "cafe.png",
+          "shared": false
+        }
+      ],
+      "excluded": [
+        "카페",
+        "집 주소",
+        "상세 이동 경로",
+        "비공개 메모"
+      ]
+    },
+    {
+      "id": "rediscovery",
+      "title": "부모님과 갔던 그 식당",
+      "period": "2026년 가을",
+      "query": "아침고요수목원",
+      "visits": [
+        {
+          "name": "아침고요수목원",
+          "date": "2026-10-18",
+          "time": "10:00–12:00",
+          "role": "부모님과 간 날",
+          "image": "autumn-garden.png"
+        },
+        {
+          "name": "금강막국수",
+          "date": "2026-10-18",
+          "time": "13:00–14:00",
+          "image": null,
+          "audio": null,
+          "caption": "부모님과 수목원에 갔다가 식사한 곳"
+        }
+      ],
+      "other_candidate": {
+        "name": "아침고요수목원",
+        "date": "2026-10-04",
+        "role": "다른 방문 후보"
+      }
+    }
+  ],
+  "sources": {
+    "더현대 서울": "https://thehyundaiseoul.ehyundai.com/about/location",
+    "26호까치할머니손칼국수": "https://korean.visitkorea.or.kr/detail/ms_detail.do?cotid=1ef9352d-e4f1-4706-bd18-7cded6289459",
+    "방아머리해변": "https://www.ansan.go.kr/tourinfo/common/bbs/selectBbsDetail.do?bbs_code=B0737&bbs_seq=1674608",
+    "발리다": "https://www.diningcode.com/profile.php?rid=MVfn9l10S8PS",
+    "아침고요수목원": "https://korean.visitkorea.or.kr/detail/ms_detail.do?cotid=e8660b54-9a93-4e87-9bb8-6ff0cb934b19",
+    "금강막국수": "https://korean.visitkorea.or.kr/detail/ms_detail.do?cotid=6a78ca5d-bd40-4e52-b032-625bcc0be6a2"
+  }
+}

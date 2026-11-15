@@ -92,20 +92,37 @@ class PcmSpeechSegmentsTest {
         assertArrayEquals(audio, store.readPcm("multi"))
     }
 
-    @Test fun unknownDuringSecondUtteranceCancelsWithoutDiscardingTheCompletedAudio() = runTest {
+    @Test fun explicitCancellationDuringSecondUtterancePreservesCompletedAudioAndIgnoresLateFinal() = runTest {
+        val first = Engine("first"); val second = Engine("second", wait = true)
+        val engines = mutableListOf(first, second)
+        val store = PrivateCaptureStore(temporary.root)
+        var writes = 0
+        val voice = VoiceMemoUseCase(MutableStateFlow(DriveState.DRIVING), { _, _, _ -> writes++; 7 })
+        val work = async { voice.record("multi", 99, input(audio, store, StandardTestDispatcher(testScheduler)) { engines.removeAt(0) }) }
+        runCurrent(); assertNotNull(second.audio)
+        voice.cancel(); runCurrent()
+        assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER), work.await())
+        second.listener!!.final("too late")
+        assertEquals(0, writes); assertEquals(1, first.closes); assertEquals(1, second.closes)
+        assertArrayEquals(audio, store.readPcm("multi"))
+    }
+
+    @Test fun unknownDuringSecondUtteranceDoesNotCancelTheAcceptedSessionOrChangeTheAudio() = runTest {
         val first = Engine("first"); val second = Engine("second", wait = true)
         val engines = mutableListOf(first, second)
         val store = PrivateCaptureStore(temporary.root)
         val drive = MutableStateFlow(DriveState.DRIVING)
-        var writes = 0
-        val voice = VoiceMemoUseCase(drive, { _, _, _ -> writes++; 7 })
+        var saved: String? = null
+        val voice = VoiceMemoUseCase(drive, { _, text, _ -> saved = text; 7 })
         val work = async { voice.record("multi", 99, input(audio, store, StandardTestDispatcher(testScheduler)) { engines.removeAt(0) }) }
         runCurrent(); assertNotNull(second.audio)
         drive.value = DriveState.UNKNOWN; runCurrent()
-        assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.UNKNOWN), work.await())
-        second.listener!!.final("too late")
-        assertEquals(0, writes); assertEquals(1, first.closes); assertEquals(1, second.closes)
+        assertFalse(work.isCompleted)
+        second.listener!!.final("second")
+        assertEquals(VoiceMemoOutcome.Saved(7), work.await())
+        assertEquals("first second", saved)
         assertArrayEquals(audio, store.readPcm("multi"))
+        assertEquals(1, first.closes); assertEquals(1, second.closes)
     }
 
     private fun input(bytes: ByteArray, store: PrivateCaptureStore, dispatcher: kotlinx.coroutines.CoroutineDispatcher,

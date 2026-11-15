@@ -42,9 +42,9 @@ class DrivePolicyTest {
             }
     }
 
-    // Catches inventing a parked voice-start path or accepting UNKNOWN.
-    @Test fun voiceStart_isAllowedOnlyWhileDriving() {
-        listOf(DriveState.UNKNOWN to false, DriveState.TRANSITION to false, DriveState.DRIVING to true, DriveState.PARKED to false)
+    // Explicit recording works without a trusted vehicle state; TRANSITION still blocks a new command.
+    @Test fun explicitVoiceStart_isAllowedExceptDuringTransition() {
+        listOf(DriveState.UNKNOWN to true, DriveState.TRANSITION to false, DriveState.DRIVING to true, DriveState.PARKED to true)
             .forEach { (state, expected) ->
                 assertEquals(state.toString(), expected, DrivePolicy.canStartVoice(state))
             }

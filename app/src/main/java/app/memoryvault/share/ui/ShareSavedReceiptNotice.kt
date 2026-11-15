@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,7 +48,8 @@ fun ShareSavedReceiptNotice(snapshots: StateFlow<DriveSnapshot>, date: String,
     val displayed by snapshots.collectAsStateWithLifecycle()
     val receipt by store.latest.collectAsStateWithLifecycle()
     val visible = ShareReceiptVisibility.forCurrentDay(receipt, date, displayed, snapshots, foreground)
-    if (visible != null) Card(Modifier.fillMaxWidth().testTag("share-saved-receipt")) {
+    if (visible != null) Card(Modifier.fillMaxWidth().testTag("share-saved-receipt"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.share_saved_receipt_title), style = MaterialTheme.typography.titleMedium)
             Text(visible.displayName, modifier = Modifier.testTag("share-saved-filename"))

@@ -1,9 +1,7 @@
 package app.memoryvault.sync.ui
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -14,14 +12,17 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.memoryvault.R
 import app.memoryvault.sync.LinkSessionSummary
+import app.memoryvault.ui.components.P2ScreenColumn
 
 @Composable
 fun MemoryLinkSetupScreen(state: SetupInputState, parked: Boolean, summary: LinkSessionSummary,
     onOpen: () -> Unit, onEndpoint: (String) -> Unit, onToken: (String) -> Unit, onSave: () -> Unit, onBack: () -> Unit) {
     Scaffold { insets ->
-        Column(Modifier.padding(insets).fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        P2ScreenColumn(Modifier.padding(insets)) {
             Text(stringResource(R.string.ai_setup_title), style = MaterialTheme.typography.titleLarge)
+            if (parked) OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)) {
+                Text(stringResource(R.string.p2_back_home))
+            }
             if (!parked) {
                 Text(stringResource(R.string.ai_park_required))
             } else {
@@ -44,16 +45,15 @@ fun MemoryLinkSetupScreen(state: SetupInputState, parked: Boolean, summary: Link
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                         modifier = Modifier.fillMaxWidth().testTag("ai-session"))
                     Button(onClick = onSave, enabled = !state.saving && state.endpoint.isNotBlank() && state.token.isNotBlank(),
-                        modifier = Modifier.heightIn(min = 64.dp).testTag("ai-save")) {
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("ai-save")) {
                         Text(stringResource(if (state.saving) R.string.ai_saving else R.string.ai_save))
                     }
                 } else {
-                    Button(onClick = onOpen, modifier = Modifier.heightIn(min = 64.dp).testTag("ai-open")) {
+                    Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("ai-open")) {
                         Text(stringResource(if (summary.configured) R.string.ai_change_setup else R.string.ai_enter_setup))
                     }
                 }
                 noticeResource(state.notice)?.let { Text(stringResource(it)) }
-                OutlinedButton(onClick = onBack, modifier = Modifier.heightIn(min = 64.dp)) { Text(stringResource(R.string.ai_back)) }
             }
         }
     }

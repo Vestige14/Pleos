@@ -5,6 +5,7 @@ import app.memoryvault.platform.SpeechInput
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -12,14 +13,13 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -73,6 +73,7 @@ class VoiceMemoUseCase(
     private val captureTimeoutMs: Long = 15_000L,
     private val finalTimeoutMs: Long = 20_000L,
     private val driveSafety: VoiceDriveSafety? = null,
+    private val elapsedRealtimeMs: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
     init {
         require(captureTimeoutMs > 0L) { "Capture timeout must be positive" }
@@ -80,27 +81,39 @@ class VoiceMemoUseCase(
     }
 
     private val active = AtomicReference<VoiceMemoSession?>(null)
+    private val activeCapture = AtomicReference<CaptureControl?>(null)
     private val mutableState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val state: StateFlow<VoiceState> = mutableState.asStateFlow()
+    private val mutableTiming = MutableStateFlow(VoiceCaptureTiming())
+    val timing: StateFlow<VoiceCaptureTiming> = mutableTiming.asStateFlow()
+
+    /** Acknowledges capture stop, not final recognition or a successful save. */
+    fun finishCapture(): Boolean = activeCapture.get()?.requestFinish() ?: false
 
     /** Blocked/busy/invalid calls never acquire or release [input] or change active UI state. */
-    suspend fun record(sessionId: String, capturedAt: Long, input: SpeechInput): VoiceMemoOutcome {
+    suspend fun record(sessionId: String, capturedAt: Long, input: SpeechInput): VoiceMemoOutcome =
+        record(sessionId, capturedAt, input, AtomicBoolean())
+
+    /** The controller uses this flag only to know when ownership of an acquired input passed here. */
+    internal suspend fun record(
+        sessionId: String,
+        capturedAt: Long,
+        input: SpeechInput,
+        inputAccepted: AtomicBoolean,
+    ): VoiceMemoOutcome {
         require(sessionId.isNotBlank()) { "Voice session ID is blank" }
         currentCoroutineContext().ensureActive()
         val session = VoiceMemoSession()
         if (!active.compareAndSet(null, session)) return VoiceMemoOutcome.Busy
-        val acceptedDrive = currentDriveSnapshot()
-        if (!DrivePolicy.canStartVoice(acceptedDrive.state)) {
-            active.compareAndSet(session, null)
-            return VoiceMemoOutcome.Blocked
-        }
-
-        mutableState.value = VoiceState.Preparing
         try {
+            if (!DrivePolicy.canStartVoice(currentDriveSnapshot().state)) return VoiceMemoOutcome.Blocked
+            inputAccepted.set(true)
+            mutableTiming.value = VoiceCaptureTiming()
+            mutableState.value = VoiceState.Preparing
             var outcome: VoiceMemoOutcome? = null
             var failure: Throwable? = null
             try {
-                outcome = runSession(session, sessionId, capturedAt, input, acceptedDrive.invalidationGeneration)
+                outcome = runSession(session, sessionId, capturedAt, input)
             } catch (thrown: Throwable) {
                 // Preserve coroutine cancellation/fatal failures until resources have been attempted.
                 failure = thrown
@@ -116,6 +129,8 @@ class VoiceMemoUseCase(
                 failure != null -> VoiceMemoOutcome.Failed(VoiceFailure.RECOGNITION)
                 else -> checkNotNull(outcome)
             }.withCleanupFailure(cleanup.failed || discardFailure != null)
+            // Cancellation and event failures can end capture without an end event.
+            markCaptureEnded()
             mutableState.value = VoiceState.Result(result)
             failure?.let { throw it }
             return result
@@ -134,73 +149,55 @@ class VoiceMemoUseCase(
         sessionId: String,
         capturedAt: Long,
         input: SpeechInput,
-        acceptedGeneration: Long,
     ): VoiceMemoOutcome = supervisorScope {
-        val safety = launch(start = CoroutineStart.UNDISPATCHED) {
-            if (driveSafety != null) driveSafety.awaitInvalidation(acceptedGeneration)
-            else driveState.first { it == DriveState.UNKNOWN }
-            session.cancel(VoiceCancelReason.UNKNOWN)
-        }
-        try {
-            val work = async(start = CoroutineStart.UNDISPATCHED) {
-                session.attach(currentCoroutineContext().job)
-                checkCancellation(session, acceptedGeneration)
-                input.bindSession(sessionId, capturedAt)
-                when (val recognition = awaitFinal(input)) {
-                    is Recognition.Unsuccessful -> recognition.outcome
-                    is Recognition.Final -> {
-                        checkCancellation(session, acceptedGeneration)
-                        mutableState.value = VoiceState.Processing
-                        try {
-                            val noteId = input.persistFinal(recognition.text) {
-                                checkCancellation(session, acceptedGeneration)
-                                saveVoiceMemo(sessionId, recognition.text, capturedAt)
-                            }
-                            checkCancellation(session, acceptedGeneration)
-                            VoiceMemoOutcome.Saved(noteId)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            VoiceMemoOutcome.Failed(VoiceFailure.STORAGE)
+        val work = async(start = CoroutineStart.UNDISPATCHED) {
+            session.attach(currentCoroutineContext().job)
+            currentCoroutineContext().ensureActive()
+            input.bindSession(sessionId, capturedAt)
+            when (val recognition = awaitFinal(input)) {
+                is Recognition.Unsuccessful -> recognition.outcome
+                is Recognition.Final -> {
+                    currentCoroutineContext().ensureActive()
+                    mutableState.value = VoiceState.Processing
+                    try {
+                        val noteId = input.persistFinal(recognition.text) {
+                            currentCoroutineContext().ensureActive()
+                            saveVoiceMemo(sessionId, recognition.text, capturedAt)
                         }
+                        currentCoroutineContext().ensureActive()
+                        VoiceMemoOutcome.Saved(noteId)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        VoiceMemoOutcome.Failed(VoiceFailure.STORAGE)
                     }
                 }
             }
-            try {
-                work.await()
-            } catch (cancelled: CancellationException) {
-                // Caller cancellation always stays cancellation, even if a session cancel raced it.
-                currentCoroutineContext().ensureActive()
-                if (cancelled is VoiceSessionCancellation) {
-                    VoiceMemoOutcome.Cancelled(cancelled.reason)
-                } else {
-                    throw cancelled
-                }
-            }
-        } finally {
-            safety.cancel()
+        }
+        try {
+            work.await()
+        } catch (cancelled: CancellationException) {
+            // Caller cancellation always stays cancellation, even if a session cancel raced it.
+            currentCoroutineContext().ensureActive()
+            if (cancelled is VoiceSessionCancellation) VoiceMemoOutcome.Cancelled(cancelled.reason)
+            else throw cancelled
         }
     }
 
     private fun currentDriveSnapshot(): VoiceDriveSnapshot =
         driveSafety?.current() ?: VoiceDriveSnapshot(driveState.value, 0L)
 
-    private suspend fun checkCancellation(session: VoiceMemoSession, acceptedGeneration: Long) {
-        val current = currentDriveSnapshot()
-        if (current.state == DriveState.UNKNOWN || current.invalidationGeneration != acceptedGeneration) {
-            session.cancel(VoiceCancelReason.UNKNOWN)
-        }
-        currentCoroutineContext().ensureActive()
-    }
-
     private suspend fun awaitFinal(input: SpeechInput): Recognition = try {
         withTimeoutOrNull(finalTimeoutMs) {
             coroutineScope {
                 val recognitionScope = this
-                val captureEnded = AtomicBoolean(false)
+                val capture = CaptureControl()
+                activeCapture.set(capture)
                 val captureDeadline = launch(start = CoroutineStart.UNDISPATCHED) {
-                    delay(captureTimeoutMs)
-                    if (captureEnded.compareAndSet(false, true)) {
+                    // The established capture budget starts at awaitFinal, even if Started is late.
+                    withTimeoutOrNull(captureTimeoutMs) { capture.manualStop.await() }
+                    if (capture.claimStop()) {
+                        markCaptureEnded()
                         mutableState.value = VoiceState.Processing
                         try {
                             input.stopCapture()
@@ -214,13 +211,19 @@ class VoiceMemoUseCase(
                 }
                 try {
                     val event = input.events().onEach {
-                        if (it == SpeechEvent.Started && !captureEnded.get()) {
-                            // Atomic transition cannot overwrite a racing capture deadline/end.
+                        if (it == SpeechEvent.Started && capture.started()) {
+                            mutableTiming.update { timing -> timing.copy(startedAtElapsedMs = elapsedRealtimeMs()) }
+                            // A late Started cannot overwrite an already processed capture end.
                             mutableState.compareAndSet(VoiceState.Preparing, VoiceState.Listening)
                         }
                         if (it == SpeechEvent.RecognitionEnded) {
-                            captureEnded.set(true)
+                            capture.end()
+                            markCaptureEnded()
                             mutableState.value = VoiceState.Processing
+                        }
+                        if (it is SpeechEvent.Final || it == SpeechEvent.Error || it == SpeechEvent.CaptureError) {
+                            capture.end()
+                            markCaptureEnded()
                         }
                     }.firstOrNull { it is SpeechEvent.Final || it == SpeechEvent.Error || it == SpeechEvent.CaptureError }
                     when (event) {
@@ -234,6 +237,8 @@ class VoiceMemoUseCase(
                         else -> Recognition.Unsuccessful(VoiceMemoOutcome.NothingHeard())
                     }
                 } finally {
+                    capture.end()
+                    activeCapture.compareAndSet(capture, null)
                     captureDeadline.cancel()
                 }
             }
@@ -244,6 +249,13 @@ class VoiceMemoUseCase(
         Recognition.Unsuccessful(VoiceMemoOutcome.Failed(VoiceFailure.CAPTURE))
     } catch (_: Exception) {
         Recognition.Unsuccessful(VoiceMemoOutcome.Failed(VoiceFailure.RECOGNITION))
+    }
+
+    private fun markCaptureEnded() {
+        mutableTiming.update { timing ->
+            if (timing.startedAtElapsedMs == null || timing.endedAtElapsedMs != null) timing
+            else timing.copy(endedAtElapsedMs = elapsedRealtimeMs())
+        }
     }
 
     private fun releaseInput(input: SpeechInput): Cleanup {
@@ -269,6 +281,29 @@ class VoiceMemoUseCase(
     }
 
     private class CaptureFailure : Exception()
+    private class CaptureControl {
+        private enum class Phase { PREPARING, LISTENING, STOP_REQUESTED, STOPPING, ENDED }
+        private val phase = AtomicReference(Phase.PREPARING)
+        val manualStop = CompletableDeferred<Unit>()
+
+        fun started(): Boolean = phase.compareAndSet(Phase.PREPARING, Phase.LISTENING)
+
+        fun requestFinish(): Boolean {
+            if (!phase.compareAndSet(Phase.LISTENING, Phase.STOP_REQUESTED)) return false
+            manualStop.complete(Unit)
+            return true
+        }
+
+        fun claimStop(): Boolean {
+            while (true) {
+                val previous = phase.get()
+                if (previous == Phase.STOPPING || previous == Phase.ENDED) return false
+                if (phase.compareAndSet(previous, Phase.STOPPING)) return true
+            }
+        }
+
+        fun end() { phase.set(Phase.ENDED) }
+    }
     private data class Cleanup(val failed: Boolean, val propagate: Throwable?)
     private sealed interface Recognition {
         data class Final(val text: String) : Recognition

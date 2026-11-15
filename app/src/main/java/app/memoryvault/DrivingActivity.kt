@@ -21,7 +21,8 @@ class DrivingActivity : ComponentActivity() {
             MemoryVaultTheme {
                 VoicePanelScreen(ui, onOpenParkedSettings = {
                     if (container.driveSnapshot.value.state == DriveState.PARKED) {
-                        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        startActivity(Intent(this, MainActivity::class.java))
+                        finish()
                     }
                 })
             }

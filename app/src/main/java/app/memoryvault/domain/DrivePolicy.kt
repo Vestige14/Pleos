@@ -18,5 +18,5 @@ object DrivePolicy {
 
     fun canEdit(state: DriveState): Boolean = state == DriveState.PARKED
     fun canExport(state: DriveState): Boolean = state == DriveState.PARKED
-    fun canStartVoice(state: DriveState): Boolean = state == DriveState.DRIVING
+    fun canStartVoice(state: DriveState): Boolean = state != DriveState.TRANSITION
 }

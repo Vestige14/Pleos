@@ -4,11 +4,13 @@ import app.memoryvault.CaptureClock
 import app.memoryvault.domain.DriveState
 import app.memoryvault.domain.VoiceMemoOutcome
 import app.memoryvault.domain.VoiceMemoUseCase
+import app.memoryvault.domain.VoiceCaptureTiming
 import app.memoryvault.domain.VoiceCancelReason
 import app.memoryvault.domain.VoiceFailure
 import app.memoryvault.domain.VoiceState
 import app.memoryvault.platform.SpeechInput
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -69,7 +71,11 @@ class VoiceSessionController(
 ) {
     private val mutableState = MutableStateFlow<VoiceServiceState>(VoiceServiceState.Idle)
     val state: StateFlow<VoiceServiceState> = mutableState.asStateFlow()
+    val timing: StateFlow<VoiceCaptureTiming> get() = voice.timing
     private val active = AtomicReference<Run?>(null)
+
+    /** The active capture may stop while final recognition and storage continue. */
+    fun finishCapture(): Boolean = if (active.get() != null) voice.finishCapture() else false
 
     suspend fun record(): VoiceServiceResult {
         currentCoroutineContext().ensureActive()
@@ -117,49 +123,85 @@ class VoiceSessionController(
 
     private suspend fun awaitReadyAndRecord(): VoiceServiceResult {
         availability().block()?.let { return VoiceServiceResult.NotStarted(it) }
-        if (driveState.value == DriveState.PARKED) return VoiceServiceResult.NotStarted(VoiceStartBlock.PARKED)
         if (driveState.value == DriveState.TRANSITION) return VoiceServiceResult.NotStarted(VoiceStartBlock.UNKNOWN)
         if (storage.value == StorageReadiness.FAILED) return VoiceServiceResult.NotStarted(VoiceStartBlock.STORAGE_UNAVAILABLE)
-        try { startDrive() } catch (_: Exception) { return VoiceServiceResult.NotStarted(VoiceStartBlock.UNKNOWN) }
-        // Ruling: repository open/seed and trusted Car readiness share this one cold-entry budget.
-        if (driveState.value == DriveState.UNKNOWN || storage.value == StorageReadiness.LOADING) {
+        // Recording waits only for private storage. Vehicle connection is not a microphone prerequisite.
+        if (storage.value == StorageReadiness.LOADING) {
             withTimeoutOrNull(5_000L) {
-                combine(driveState, storage) { drive, db -> drive to db }.first { (drive, db) ->
-                    drive == DriveState.PARKED || drive == DriveState.TRANSITION || db == StorageReadiness.FAILED ||
-                        (drive == DriveState.DRIVING && db == StorageReadiness.READY)
-                }
+                combine(driveState, storage) { drive, db ->
+                    drive == DriveState.TRANSITION || db != StorageReadiness.LOADING
+                }.first { it }
             }
         }
-        // Check live values at the actual coordinator invocation, including stale PendingIntents.
+        // Check live values at the actual microphone invocation, including stale PendingIntents.
         availability().block()?.let { return VoiceServiceResult.NotStarted(it) }
-        if (driveState.value == DriveState.PARKED) return VoiceServiceResult.NotStarted(VoiceStartBlock.PARKED)
-        if (driveState.value != DriveState.DRIVING) return VoiceServiceResult.NotStarted(VoiceStartBlock.UNKNOWN)
+        if (driveState.value == DriveState.TRANSITION) return VoiceServiceResult.NotStarted(VoiceStartBlock.UNKNOWN)
         if (storage.value != StorageReadiness.READY) return VoiceServiceResult.NotStarted(VoiceStartBlock.STORAGE_UNAVAILABLE)
         currentCoroutineContext().ensureActive()
-        val input = try { speechFactory() } catch (_: Exception) {
+        val input = try { speechFactory() } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
             return VoiceServiceResult.NotStarted(VoiceStartBlock.SDK_UNAVAILABLE)
         }
-        mutableState.value = VoiceServiceState.Preparing
-        return supervisorScope {
-            val states = launch(start = CoroutineStart.UNDISPATCHED) {
-                voice.state.collect { state ->
-                    when (state) {
-                        VoiceState.Preparing -> mutableState.value = VoiceServiceState.Preparing
-                        VoiceState.Listening -> mutableState.value = VoiceServiceState.Listening
-                        VoiceState.Processing -> mutableState.value = VoiceServiceState.Processing
-                        else -> Unit
+        val transferred = AtomicBoolean(false)
+        val released = AtomicBoolean(false)
+        fun releaseUnaccepted(): Throwable? {
+            if (!released.compareAndSet(false, true)) return null
+            val failures = listOfNotNull(
+                runCatching { input.cancel() }.exceptionOrNull(),
+                runCatching { input.close() }.exceptionOrNull(),
+            )
+            return failures.firstOrNull { it is CancellationException }
+                ?: failures.firstOrNull { it !is Exception }
+                ?: failures.firstOrNull()
+        }
+        fun rejectAfterAcquisition(reason: VoiceStartBlock): VoiceServiceResult {
+            return when (val failure = releaseUnaccepted()) {
+                null -> VoiceServiceResult.NotStarted(reason)
+                is CancellationException -> throw failure
+                is Exception -> VoiceServiceResult.NotStarted(VoiceStartBlock.SERVICE_UNAVAILABLE)
+                else -> throw failure
+            }
+        }
+
+        try {
+            // The factory can race a new vehicle transition, permission loss, or cancellation.
+            currentCoroutineContext().ensureActive()
+            availability().block()?.let { return rejectAfterAcquisition(it) }
+            if (driveState.value == DriveState.TRANSITION) return rejectAfterAcquisition(VoiceStartBlock.UNKNOWN)
+            if (storage.value != StorageReadiness.READY) return rejectAfterAcquisition(VoiceStartBlock.STORAGE_UNAVAILABLE)
+            return supervisorScope {
+                val states = launch(start = CoroutineStart.UNDISPATCHED) {
+                    voice.state.collect { state ->
+                        when (state) {
+                            VoiceState.Preparing -> mutableState.value = VoiceServiceState.Preparing
+                            VoiceState.Listening -> mutableState.value = VoiceServiceState.Listening
+                            VoiceState.Processing -> mutableState.value = VoiceServiceState.Processing
+                            else -> Unit
+                        }
                     }
                 }
+                try {
+                    val outcome = voice.record(newSessionId(), captureClock.now(), input, transferred)
+                    if (transferred.get()) VoiceServiceResult.Completed(outcome)
+                    else when (outcome) {
+                        VoiceMemoOutcome.Blocked -> rejectAfterAcquisition(VoiceStartBlock.UNKNOWN)
+                        VoiceMemoOutcome.Busy -> rejectAfterAcquisition(VoiceStartBlock.BUSY)
+                        else -> rejectAfterAcquisition(VoiceStartBlock.SERVICE_UNAVAILABLE)
+                    }
+                } finally {
+                    states.cancel()
+                }
             }
-            try {
-                VoiceServiceResult.Completed(voice.record(newSessionId(), captureClock.now(), input))
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                VoiceServiceResult.Completed(VoiceMemoOutcome.Failed(VoiceFailure.RECOGNITION))
-            } finally {
-                states.cancel()
-            }
+        } catch (cancelled: CancellationException) {
+            if (!transferred.get()) releaseUnaccepted()
+            throw cancelled
+        } catch (_: Exception) {
+            if (transferred.get()) return VoiceServiceResult.Completed(VoiceMemoOutcome.Failed(VoiceFailure.RECOGNITION))
+            val cleanup = releaseUnaccepted()
+            if (cleanup is CancellationException) throw cleanup
+            if (cleanup != null && cleanup !is Exception) throw cleanup
+            return VoiceServiceResult.NotStarted(VoiceStartBlock.SERVICE_UNAVAILABLE)
         }
     }
 

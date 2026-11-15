@@ -73,12 +73,15 @@ class MemoryRepository(
         db.visitDao().insertAll(seed.visits)
     }
 
+    fun observeDates(): Flow<List<String>> = db.visitDao().observeDates()
+
     fun observeDay(date: String): Flow<DayDraft> = combine(
         db.visitDao().observeDay(date), db.photoDao().observeAll(), db.noteDao().observeAll(),
-        db.noteLinkDao().observeAll(),
-    ) { visits, photos, notes, links ->
+        db.noteLinkDao().observeAll(), db.memoryAssociationDao().observeLinks(),
+    ) { visits, photos, notes, legacyLinks, associations ->
+        val links = projectVisitLinks(legacyLinks, associations)
         val visitIds = visits.map { it.id }.toSet()
-        val notesById = notes.filter { it.kind == NoteKind.TYPED || it.sourceDate == date }.associateBy { it.id }
+        val notesById = notes.associateBy { it.id }
         val activeLinks = links.filter {
             it.status != NoteLinkStatus.REJECTED && it.visitId in visitIds && it.noteId in notesById
         }

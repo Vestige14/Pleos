@@ -9,6 +9,7 @@ import app.memoryvault.TypedMemoResult
 import app.memoryvault.data.DayDraft
 import app.memoryvault.data.LinkState
 import app.memoryvault.platform.DriveSnapshot
+import app.memoryvault.domain.VoiceCaptureTiming
 import app.memoryvault.service.VoiceMemoService
 import app.memoryvault.service.VoiceServiceState
 import app.memoryvault.service.VoiceStartRequest
@@ -32,8 +33,11 @@ sealed interface DayDraftState {
 interface MemoryVaultUi {
     val aiProgress: StateFlow<MemoryLinkProgress> get() = MemoryLinkProgress.unavailable
     val driveSnapshot: StateFlow<DriveSnapshot>
+    val recordDates: Flow<List<String>> get() = flowOf(emptyList())
+    fun selectRecordDate(date: String) {}
     val day: Flow<DayDraftState>
     val voiceState: StateFlow<VoiceServiceState>
+    val voiceTiming: StateFlow<VoiceCaptureTiming> get() = VoiceCaptureTiming.EMPTY
     val readyNotificationEnabled: StateFlow<Boolean>
     val photoReview: StateFlow<PhotoReviewState>
     fun thumbnailAllowed(epoch: PhotoThumbnailEpoch): Boolean
@@ -46,6 +50,7 @@ interface MemoryVaultUi {
     fun retryVehicleConnection()
     fun startVoice(): VoiceStartRequest
     fun cancelVoice()
+    fun finishVoice(): Boolean = false
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -56,6 +61,7 @@ class AppUiBridge(
     override val aiProgress = MemoryLinkRuntime.progress
     override val driveSnapshot = container.driveSnapshot
     override val voiceState = container.voiceState
+    override val voiceTiming = container.voiceTiming
     override val readyNotificationEnabled = container.readyNotificationEnabled
     override val photoReview = container.photoReview
     override fun thumbnailAllowed(epoch: PhotoThumbnailEpoch) = container.thumbnailAllowed(epoch)
@@ -63,13 +69,19 @@ class AppUiBridge(
         container.loadPhotoThumbnail(uri, epoch)?.asImageBitmap()
     override fun refreshPhotos() = container.refreshPhotos()
     override suspend fun setPhotoState(uri: String, state: LinkState) = container.setPhotoState(uri, state)
+    override fun selectRecordDate(date: String) = container.selectRecordDate(date)
+    override val recordDates: Flow<List<String>> = container.repository.flatMapLatest { state ->
+        if (state is RepositoryState.Ready) state.repository.observeDates() else flowOf(emptyList())
+    }
     override val day: Flow<DayDraftState> = container.repository.flatMapLatest { state ->
         when (state) {
             RepositoryState.Loading -> flowOf(DayDraftState.Loading)
             RepositoryState.Failed -> flowOf(DayDraftState.Failed)
-            is RepositoryState.Ready -> state.repository.observeDay(DemoConfig.DEMO_DATE.toString())
-                .map<DayDraft, DayDraftState> { DayDraftState.Ready(it) }
-                .catch { emit(DayDraftState.Failed) }
+            is RepositoryState.Ready -> container.recordDate.flatMapLatest { date ->
+                state.repository.observeDay(date)
+                    .map<DayDraft, DayDraftState> { DayDraftState.Ready(it) }
+                    .catch { emit(DayDraftState.Failed) }
+            }
         }
     }
     override suspend fun addTypedNote(visitId: String, text: String) = container.addTypedNote(visitId, text)
@@ -78,4 +90,5 @@ class AppUiBridge(
     override fun retryVehicleConnection() = container.retryVehicleConnection()
     override fun startVoice() = requestVoice()
     override fun cancelVoice() = VoiceMemoService.requestCancel()
+    override fun finishVoice() = VoiceMemoService.requestFinish()
 }

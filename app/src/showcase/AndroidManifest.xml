@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission tools:node="removeAll" />
+    <uses-permission-sdk-23 tools:node="removeAll" />
+    <permission tools:node="removeAll" />
+    <queries tools:node="remove" />
+    <application
+        android:name="app.memoryvault.ui.p2.showcase.ShowcaseApplication"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false"
+        android:label="P2 Synthetic Showcase"
+        android:theme="@style/Theme.MemoryVault"
+        tools:node="replace">
+        <activity android:name="app.memoryvault.ui.p2.showcase.ShowcaseHostActivity"
+            android:exported="false" android:resizeableActivity="true" />
+    </application>
+</manifest>

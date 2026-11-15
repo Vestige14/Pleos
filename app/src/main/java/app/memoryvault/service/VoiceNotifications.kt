@@ -74,7 +74,7 @@ class VoiceNotifications(context: Context) {
         try {
             val body = when (state) {
                 ReadyNotificationState.READY -> R.string.voice_ready_driving
-                ReadyNotificationState.PARKED -> R.string.voice_ready_parked
+                ReadyNotificationState.PARKED -> R.string.p2_voice_ready_parked
                 else -> R.string.voice_ready_unavailable
             }
             val builder = builder(READY_CHANNEL).setContentText(context.getString(body))
@@ -125,7 +125,7 @@ class VoiceNotifications(context: Context) {
 }
 
 private fun VoiceNotice.textResource(): Int = when (this) {
-    VoiceNotice.CHECKING -> R.string.voice_checking
+    VoiceNotice.CHECKING -> R.string.p2_voice_storage_checking
     VoiceNotice.PREPARING -> R.string.voice_preparing
     VoiceNotice.RECORDING -> R.string.voice_recording
     VoiceNotice.PROCESSING -> R.string.voice_processing

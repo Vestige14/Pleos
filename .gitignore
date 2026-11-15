@@ -43,3 +43,13 @@ keystore.properties
 
 # Keep Android sources visible when a global ignore rule matches "main".
 !app/src/main/
+
+# Local development records; submission instructions live in README.md.
+/docs/
+/AGENTS.md
+/backend/README.md
+/scripts/fixtures/README.md
+
+# Explicitly published, inspected APKs. Other build artifacts remain ignored.
+!/apk/HAM_release.apk
+!/apk/HAM_current.apk

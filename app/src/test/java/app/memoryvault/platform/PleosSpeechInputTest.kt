@@ -45,7 +45,7 @@ class PleosSpeechInputTest {
     @Test fun rejectedInput_isInertAndNeverConstructsTheSdk() = runTest {
         var creations = 0
         val input = PleosSpeechInput { creations++; Sdk() }
-        val useCase = VoiceMemoUseCase(MutableStateFlow(DriveState.PARKED), { _, _, _ -> 1L })
+        val useCase = VoiceMemoUseCase(MutableStateFlow(DriveState.TRANSITION), { _, _, _ -> 1L })
         assertEquals(0, creations)
         assertEquals(VoiceMemoOutcome.Blocked, useCase.record("blocked", 0L, input))
         assertEquals(0, creations)

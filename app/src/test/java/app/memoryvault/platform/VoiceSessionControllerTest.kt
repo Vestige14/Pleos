@@ -28,7 +28,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class VoiceSessionControllerTest {
     @Test fun transitionDuringReadiness_blocksTheNewCommandImmediately() = runTest {
-        val fixture = Fixture(DriveState.UNKNOWN)
+        val fixture = Fixture(DriveState.UNKNOWN, StorageReadiness.LOADING)
         val run = async { fixture.controller.record() }
         runCurrent()
         fixture.drive.value = DriveState.TRANSITION
@@ -37,22 +37,17 @@ class VoiceSessionControllerTest {
         assertEquals(VoiceServiceResult.NotStarted(VoiceStartBlock.UNKNOWN), run.await())
         assertTrue(fixture.inputs.isEmpty())
     }
-    @Test fun coldUnknown_waitsWithoutSpeech_andTimesOutAtFiveSeconds() = runTest {
+    @Test fun unknownWithReadyStorage_startsSpeechWithoutWaitingForVehicle() = runTest {
         val fixture = Fixture(DriveState.UNKNOWN)
         val run = async { fixture.controller.record() }
         runCurrent()
-        assertEquals(VoiceServiceState.CheckingVehicle, fixture.controller.state.value)
-        assertEquals(0, fixture.inputs.size)
-        advanceTimeBy(4_999)
-        runCurrent()
-        assertFalse(run.isCompleted)
-        advanceTimeBy(1)
-        runCurrent()
-        assertEquals(VoiceServiceResult.NotStarted(VoiceStartBlock.UNKNOWN), run.await())
-        assertTrue(fixture.inputs.isEmpty())
+        assertEquals(VoiceServiceState.Preparing, fixture.controller.state.value)
+        assertEquals(1, fixture.inputs.size)
+        fixture.controller.cancel()
+        assertEquals(VoiceServiceResult.Completed(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER)), run.await())
     }
 
-    @Test fun coldReadinessAndStorage_shareFiveSecondBudget_thenCaptureHasItsOwnDeadline() = runTest {
+    @Test fun storageReadinessUsesFiveSecondBudget_thenCaptureHasItsOwnDeadline() = runTest {
         val fixture = Fixture(DriveState.UNKNOWN, StorageReadiness.LOADING)
         val run = async { fixture.controller.record() }
         runCurrent()
@@ -76,14 +71,19 @@ class VoiceSessionControllerTest {
         assertEquals(VoiceServiceResult.Completed(VoiceMemoOutcome.TimedOut()), run.await())
     }
 
-    @Test fun parkedDuringColdWait_blocksImmediatelyWithoutWaitingForStorage() = runTest {
+    @Test fun parkedDuringColdWait_keepsWaitingForStorageBeforeSpeech() = runTest {
         val fixture = Fixture(DriveState.UNKNOWN, StorageReadiness.LOADING)
         val run = async { fixture.controller.record() }
         runCurrent()
         fixture.drive.value = DriveState.PARKED
         runCurrent()
-        assertEquals(VoiceServiceResult.NotStarted(VoiceStartBlock.PARKED), run.await())
+        assertFalse(run.isCompleted)
         assertTrue(fixture.inputs.isEmpty())
+        fixture.storage.value = StorageReadiness.READY
+        runCurrent()
+        assertEquals(1, fixture.inputs.size)
+        fixture.controller.cancel()
+        assertEquals(VoiceServiceResult.Completed(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER)), run.await())
     }
 
     @Test fun storageLoadingOrFailure_neverAcquiresSpeechOrClaimsSaved() = runTest {
@@ -115,13 +115,16 @@ class VoiceSessionControllerTest {
         }
     }
 
-    @Test fun staleReadyAction_rechecksCurrentParkedStateAtInvocation() = runTest {
+    @Test fun parkedRecordingDoesNotChangeReadyNotificationPolicyOrPrivateGate() = runTest {
         val fixture = Fixture(DriveState.DRIVING)
         assertEquals(ReadyNotificationState.READY,
             ReadyNotificationPolicy.state(true, fixture.drive.value, fixture.availability, false))
         fixture.drive.value = DriveState.PARKED
-        assertEquals(VoiceServiceResult.NotStarted(VoiceStartBlock.PARKED), fixture.controller.record())
-        assertTrue(fixture.inputs.isEmpty())
+        val run = async { fixture.controller.record() }
+        runCurrent()
+        assertEquals(1, fixture.inputs.size)
+        fixture.controller.cancel()
+        assertEquals(VoiceServiceResult.Completed(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER)), run.await())
         assertEquals(ReadyNotificationState.PARKED,
             ReadyNotificationPolicy.state(true, fixture.drive.value, fixture.availability, false))
         assertEquals(ReadyNotificationState.HIDDEN,
@@ -131,13 +134,14 @@ class VoiceSessionControllerTest {
     }
 
     @Test fun cancellationAndDuplicateDuringReadiness_leaveNoOrphanOrSpeech() = runTest {
-        val fixture = Fixture(DriveState.UNKNOWN)
+        val fixture = Fixture(DriveState.UNKNOWN, StorageReadiness.LOADING)
         val run = async { fixture.controller.record() }
         runCurrent()
         assertEquals(VoiceServiceResult.NotStarted(VoiceStartBlock.BUSY), fixture.controller.record())
         fixture.controller.cancel()
         assertEquals(VoiceServiceResult.Completed(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER)), run.await())
         fixture.drive.value = DriveState.DRIVING
+        fixture.storage.value = StorageReadiness.READY
         runCurrent()
         assertTrue(fixture.inputs.isEmpty())
         val next = async { fixture.controller.record() }
@@ -164,7 +168,7 @@ class VoiceSessionControllerTest {
     }
 
     @Test fun revokedMicrophoneDuringReadiness_cancelsWithoutAcquiringSpeech() = runTest {
-        val fixture = Fixture(DriveState.UNKNOWN)
+        val fixture = Fixture(DriveState.UNKNOWN, StorageReadiness.LOADING)
         val run = async { fixture.controller.record() }
         runCurrent()
         fixture.availability = VoiceAvailability(microphone = false)
@@ -197,9 +201,13 @@ class VoiceSessionControllerTest {
             run.cancel()
             run.join()
             assertTrue(run.isCancelled)
-            if (drive == DriveState.DRIVING) assertEquals(listOf("cancel", "close"), fixture.inputs.single().cleanup)
+            assertEquals(listOf("cancel", "close"), fixture.inputs.single().cleanup)
             fixture.drive.value = DriveState.PARKED
-            assertEquals(VoiceServiceResult.NotStarted(VoiceStartBlock.PARKED), fixture.controller.record())
+            val next = async { fixture.controller.record() }
+            runCurrent()
+            assertEquals(2, fixture.inputs.size)
+            fixture.controller.cancel()
+            assertEquals(VoiceServiceResult.Completed(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER)), next.await())
         }
     }
 

@@ -76,18 +76,16 @@ class VoiceMemoUseCaseTest {
     }
 
     // Each test names a broken coordinator branch/side effect; only speech and persistence are fake.
-    @Test fun unknownAndParkedStart_areBlockedWithoutAcquiringOrClosingInput() = runTest {
-        listOf(DriveState.UNKNOWN, DriveState.TRANSITION, DriveState.PARKED).forEach { state ->
-            val store = Store()
-            val useCase = VoiceMemoUseCase(MutableStateFlow(state), store::save)
-            val input = Input()
+    @Test fun transitionStart_isBlockedWithoutAcquiringOrClosingInput() = runTest {
+        val store = Store()
+        val useCase = VoiceMemoUseCase(MutableStateFlow(DriveState.TRANSITION), store::save)
+        val input = Input()
 
-            assertEquals(VoiceMemoOutcome.Blocked, useCase.record("s", 7L, input))
-            assertEquals(VoiceState.Idle, useCase.state.value)
-            assertEquals(0, input.eventsCalls)
-            assertEquals(emptyList<String>(), input.cleanup)
-            assertTrue(store.calls.isEmpty())
-        }
+        assertEquals(VoiceMemoOutcome.Blocked, useCase.record("s", 7L, input))
+        assertEquals(VoiceState.Idle, useCase.state.value)
+        assertEquals(0, input.eventsCalls)
+        assertEquals(emptyList<String>(), input.cleanup)
+        assertTrue(store.calls.isEmpty())
     }
 
     @Test fun blankSessionId_isRejectedBeforeAcquiringInput() = runTest {
@@ -326,7 +324,7 @@ class VoiceMemoUseCaseTest {
         assertEquals(VoiceMemoOutcome.Saved(41L), useCase.record("next", 8L, Input(flowOf(SpeechEvent.Final("new")))))
     }
 
-    @Test fun unknownCancelsImmediately_andLateCallbacksCannotAffectTheNextSession() = runTest {
+    @Test fun explicitCancelAfterUnknown_andLateCallbacksCannotAffectTheNextSession() = runTest {
         val drive = MutableStateFlow(DriveState.DRIVING)
         val store = Store()
         val useCase = VoiceMemoUseCase(drive, store::save)
@@ -336,7 +334,9 @@ class VoiceMemoUseCaseTest {
         assertEquals(VoiceState.Listening, useCase.state.value)
         drive.value = DriveState.UNKNOWN
         runCurrent()
-        assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.UNKNOWN), active.await())
+        assertFalse("Vehicle uncertainty cannot cancel an accepted recording", active.isCompleted)
+        useCase.cancel()
+        assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER), active.await())
         assertEquals(listOf("cancel", "close"), oldInput.cleanup)
         drive.value = DriveState.DRIVING
         val input = Input()
@@ -477,18 +477,20 @@ class VoiceMemoUseCaseTest {
         assertEquals(VoiceState.Result(VoiceMemoOutcome.Cancelled(VoiceCancelReason.USER)), useCase.state.value)
     }
 
-    @Test fun unknownWhileSaving_cancelsSaveWithoutReportingSaved() = runTest {
-        var saveCancelled = false
+    @Test fun unknownWhileSaving_doesNotInterruptTheAcceptedCommit() = runTest {
+        val mayReturn = CompletableDeferred<Unit>()
         val drive = MutableStateFlow(DriveState.DRIVING)
-        val store = Store { try { awaitCancellation() } finally { saveCancelled = true } }
+        val store = Store { mayReturn.await(); 41L }
         val useCase = VoiceMemoUseCase(drive, store::save)
         val active = async { useCase.record("s", 7L, Input(flowOf(SpeechEvent.Final("text")))) }
         runCurrent()
         assertEquals(VoiceState.Processing, useCase.state.value)
         drive.value = DriveState.UNKNOWN
         runCurrent()
-        assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.UNKNOWN), active.await())
-        assertTrue(saveCancelled)
+        assertFalse(active.isCompleted)
+        mayReturn.complete(Unit)
+        assertEquals(VoiceMemoOutcome.Saved(41L), active.await())
+        assertEquals(listOf(SaveCall("s", "text", 7L)), store.calls)
     }
 
     @Test fun callerCancellationWhileSaving_propagatesAndDoesNotReportSaved() = runTest {

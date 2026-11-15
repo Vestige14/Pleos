@@ -40,6 +40,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -90,7 +91,7 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
     private val mutableVoiceState = MutableStateFlow<VoiceServiceState>(VoiceServiceState.Idle)
     val voiceState = mutableVoiceState.asStateFlow()
 
-    private val startup = RepositoryStartup {
+    private val startup: RepositoryStartup = RepositoryStartup {
         val database = Room.databaseBuilder(appContext, AppDatabase::class.java, "memory-vault.db")
             .addMigrations(AppDatabase.MIGRATION_1_2, app.memoryvault.memory.MemoryAssociationMigration.FROM_2_TO_3).build()
         try {
@@ -99,6 +100,17 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
             }, enqueueVoiceLink = { noteId -> app.memoryvault.memory.MemoryAssociationStore(database).register(noteId) })
             val seed = appContext.assets.open("seed_day.json").bufferedReader().use { SeedLoader.parse(it.readText()) }
             result.seedIfEmpty(seed)
+            // User-authorized local filming preparation; absent from release assets.
+            if ("ham_story_seed.json" in appContext.assets.list("").orEmpty()) scope.launch(Dispatchers.IO) {
+                driveSnapshot.first { it.state == DriveState.PARKED }
+                val generation = driveSnapshot.value.invalidationGeneration
+                fun allowed() = driveSnapshot.value.let { it.state == DriveState.PARKED && it.invalidationGeneration == generation }
+                try {
+                    app.memoryvault.data.ScenarioPreparation.apply(appContext, database, ::allowed)
+                    if (allowed()) refreshPhotos()
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Preserve existing records; no retry or credential changes. */ }
+            }
             try {
                 CaptureRuntime.recover(appContext) { session ->
                     database.noteDao().getByVoiceSession(session)?.let { CaptureNote(it.id, it.text, it.capturedAt) }
@@ -112,6 +124,13 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
         } catch (failure: Throwable) {
             runCatching { database.close() }
             throw failure
+        }
+    }
+    private val mutableRecordDate = MutableStateFlow(DemoConfig.DEMO_DATE.toString())
+    val recordDate = mutableRecordDate.asStateFlow()
+    fun selectRecordDate(date: String) {
+        if (driveSnapshot.value.state == DriveState.PARKED) {
+            runCatching { java.time.LocalDate.parse(date) }.onSuccess { mutableRecordDate.value = it.toString() }
         }
     }
     val repository = startup.state
@@ -130,6 +149,7 @@ class AppContainer(context: Context, val captureClock: CaptureClock = ReplayCapt
         val ready = repository.value as? RepositoryState.Ready ?: error("Storage unavailable")
         ready.repository.saveVoiceMemo(id, text, capturedAt).also { MemoryLinkRuntime.reconcilePendingJobs(appContext) }
     }, driveSafety = driveSafety)
+    val voiceTiming get() = voice.timing
     private val photos = PhotoReviewController(driveSnapshot, { readPhotoPermissions(appContext) }, {
         (repository.value as? RepositoryState.Ready)?.repository?.let { ready ->
             object : PhotoReviewStore {

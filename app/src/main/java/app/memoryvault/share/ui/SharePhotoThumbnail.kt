@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,17 +55,30 @@ internal class ShareThumbnailLoader(private val resolver: ContentResolver, priva
     }
 }
 
+private sealed interface ShareThumbnailState {
+    data object Loading : ShareThumbnailState
+    data class Ready(val image: ImageBitmap) : ShareThumbnailState
+    data object Failed : ShareThumbnailState
+}
+
 @Composable
 internal fun SharePhotoThumbnail(uri: String, thumbnail: suspend (String) -> ImageBitmap?, modifier: Modifier = Modifier) {
-    val image by produceState<ImageBitmap?>(null, uri, thumbnail) {
-        value = try { thumbnail(uri) }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { null }
-    }
-    Box(modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
-        val loaded = image
-        if (loaded == null) Text(stringResource(R.string.photo_thumbnail_unavailable))
-        else Image(loaded, contentDescription = stringResource(R.string.photo_thumbnail_description),
-            contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(180.dp))
+    key(uri, thumbnail) {
+        val state by produceState<ShareThumbnailState>(ShareThumbnailState.Loading, uri, thumbnail) {
+            value = ShareThumbnailState.Loading
+            value = try {
+                thumbnail(uri)?.let { ShareThumbnailState.Ready(it) } ?: ShareThumbnailState.Failed
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { ShareThumbnailState.Failed }
+        }
+        Box(modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+            when (val shown = state) {
+                ShareThumbnailState.Loading -> Text(stringResource(R.string.photo_thumbnail_loading))
+                ShareThumbnailState.Failed -> Text(stringResource(R.string.photo_thumbnail_unavailable))
+                is ShareThumbnailState.Ready -> Image(shown.image,
+                    contentDescription = stringResource(R.string.photo_thumbnail_description),
+                    contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(180.dp))
+            }
+        }
     }
 }

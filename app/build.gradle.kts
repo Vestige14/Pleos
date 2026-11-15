@@ -6,6 +6,9 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// Local synthetic UI inspection only; normal debug/release configuration stays unchanged.
+val p2Showcase = providers.gradleProperty("p2Showcase").orNull == "true"
+
 android {
     namespace = "app.memoryvault"
     compileSdk = 35
@@ -17,8 +20,13 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.0.1-bootstrap"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = if (p2Showcase)
+            "app.memoryvault.ui.p2.showcase.ShowcaseIsolationRunner"
+        else "androidx.test.runner.AndroidJUnitRunner"
+        if (p2Showcase) testApplicationId = "app.memoryvault.showcase.test"
     }
+
+    testBuildType = if (p2Showcase) "showcase" else "debug"
 
     useLibrary("android.car")
 
@@ -40,6 +48,13 @@ android {
             isMinifyEnabled = true
             isDebuggable = false
             proguardFiles("vendor-log-protection.pro")
+        }
+        if (p2Showcase) {
+            create("showcase") {
+                initWith(getByName("debug"))
+                applicationIdSuffix = ".showcase"
+                matchingFallbacks += listOf("debug")
+            }
         }
         getByName("release") {
             buildConfigField("boolean", "MEMORY_LINK_LOCAL_HTTP", "false")

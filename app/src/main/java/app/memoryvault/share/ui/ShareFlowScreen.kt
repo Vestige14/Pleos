@@ -1,12 +1,7 @@
 package app.memoryvault.share.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +28,7 @@ import app.memoryvault.share.ShareExportFailure
 import app.memoryvault.share.ShareExportResult
 import app.memoryvault.share.ShareFlowController
 import app.memoryvault.share.ShareSafetyGate
+import app.memoryvault.ui.components.P2ScreenColumn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -48,6 +44,8 @@ fun ShareFlowScreen(
     onExport: suspend (ShareDraft) -> ShareExportResult,
     thumbnail: suspend (String) -> ImageBitmap? = { null },
     loadingNotice: Int = R.string.share_loading,
+    onSaveOnly: suspend (ShareDraft) -> ShareExportResult = { ShareExportResult.Blocked },
+    demoPreviewOnly: Boolean = false,
 ) {
     val snapshot by snapshots.collectAsStateWithLifecycle()
     val active by foreground.collectAsStateWithLifecycle()
@@ -70,9 +68,10 @@ fun ShareFlowScreen(
     BackHandler(onBack = ::back)
 
     Scaffold { insets ->
-        if (!safe) Text(stringResource(R.string.share_park_required), Modifier.padding(insets).padding(24.dp).testTag("share-locked"))
-        else Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (!safe) P2ScreenColumn(Modifier.padding(insets)) {
+            Text(stringResource(R.string.share_park_required), Modifier.testTag("share-locked"))
+        }
+        else P2ScreenColumn(Modifier.padding(insets)) {
             val draft = preview
             if (state.input == null) Text(stringResource(loadingNotice), Modifier.testTag("share-loading"))
             else if (draft == null) ShareSelectScreen(state, controller.preview() != null,
@@ -88,7 +87,10 @@ fun ShareFlowScreen(
                 onRetry = { scope.launch { if (safety.allows(epoch)) controller.retrySave() } }, thumbnail = thumbnail)
             else SharePreviewScreen(draft, busy, notice,
                 onExport = {
-                    if (!busy && safety.allows(epoch)) {
+                    if (demoPreviewOnly) {
+                        if (!busy && safety.allows(epoch)) notice = null
+                    }
+                    else if (!busy && safety.allows(epoch)) {
                         busy = true
                         scope.launch {
                             try {
@@ -108,7 +110,28 @@ fun ShareFlowScreen(
                             finally { busy = false }
                         }
                     }
-                }, onBack = ::back, thumbnail = thumbnail)
+                }, onBack = ::back, thumbnail = thumbnail,
+                onHome = { if (!busy && safety.allows(epoch)) onClose() },
+                onSaveOnly = {
+                    if (demoPreviewOnly) {
+                        if (!busy && safety.allows(epoch)) notice = null
+                    }
+                    else if (!busy && safety.allows(epoch)) {
+                        busy = true
+                        scope.launch {
+                            try {
+                                notice = when (val result = onSaveOnly(draft)) {
+                                    is ShareExportResult.Saved -> if (result.receiptPersisted) R.string.share_saved else R.string.share_saved_receipt_unavailable
+                                    is ShareExportResult.Failed -> R.string.share_storage_failed
+                                    ShareExportResult.Blocked -> R.string.share_park_required
+                                    ShareExportResult.Busy -> R.string.share_exporting
+                                }
+                            } catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { notice = R.string.share_storage_failed }
+                            finally { busy = false }
+                        }
+                    }
+                })
         }
     }
 }

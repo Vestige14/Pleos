@@ -1,15 +1,12 @@
 package app.memoryvault.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -18,9 +15,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -32,13 +26,14 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.memoryvault.sync.MemoryLinkProgress
@@ -53,26 +48,32 @@ import app.memoryvault.data.DayDraft
 import app.memoryvault.data.LinkState
 import app.memoryvault.data.Note
 import app.memoryvault.data.NoteVisitLink
+import app.memoryvault.data.SeedLoader
+import app.memoryvault.data.Visit
 import app.memoryvault.domain.DriveState
 import app.memoryvault.platform.DriveReadinessReason
 import app.memoryvault.platform.DriveSnapshot
 import app.memoryvault.platform.PhotoAccess
+import app.memoryvault.p1.provenance.ParkedProvenanceBadges
+import app.memoryvault.p1.provenance.ProvenancePolicy
+import app.memoryvault.ui.components.P2ActionPair
+import app.memoryvault.ui.components.P2HomeNavigation
+import app.memoryvault.ui.components.P2HomePane
+import app.memoryvault.ui.components.P2RecordShareActions
+import app.memoryvault.ui.components.P2ScreenColumn
+import app.memoryvault.ui.components.P2SectionHeading
+import app.memoryvault.ui.theme.P2DarkColors
+import app.memoryvault.ui.theme.P2LightColors
+import app.memoryvault.ui.theme.P2Typography
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
 
-private val largeBody = TextStyle(fontSize = 20.sp, lineHeight = 28.sp)
-private val typography = Typography(
-    bodyLarge = largeBody, bodyMedium = largeBody, labelLarge = largeBody,
-    titleMedium = TextStyle(fontSize = 22.sp, lineHeight = 30.sp),
-    titleLarge = TextStyle(fontSize = 24.sp, lineHeight = 32.sp),
-)
-
 @Composable
 fun MemoryVaultTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
-        typography = typography, content = content,
+        colorScheme = if (isSystemInDarkTheme()) P2DarkColors else P2LightColors,
+        typography = P2Typography, content = content,
     )
 }
 
@@ -94,12 +95,12 @@ fun MemoryVaultScreen(
 ) {
     val snapshot by ui.driveSnapshot.collectAsStateWithLifecycle()
     val voice by ui.voiceState.collectAsStateWithLifecycle()
+    val voiceTiming by ui.voiceTiming.collectAsStateWithLifecycle()
     val readyEnabled by ui.readyNotificationEnabled.collectAsStateWithLifecycle()
     val photoReview by ui.photoReview.collectAsStateWithLifecycle()
     val displayedPhotoGeneration = snapshot.invalidationGeneration
-    fun photosAllowed() = ui.driveSnapshot.value.let {
-        it.state == DriveState.PARKED && it.invalidationGeneration == displayedPhotoGeneration
-    }
+    val navigation = remember(ui) { P2HomeNavigation() }
+    val navigationState by navigation.state.collectAsStateWithLifecycle()
     var editor by rememberSaveable(stateSaver = editorSaver) { mutableStateOf(MemoEditorState()) }
     var typedNotice by rememberSaveable { mutableStateOf<Int?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -109,6 +110,51 @@ fun MemoryVaultScreen(
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val appContext = LocalContext.current.applicationContext
+    val knownReplayVisits = remember(appContext) {
+        runCatching {
+            appContext.assets.open("seed_day.json").bufferedReader().use { SeedLoader.parse(it.readText()).visits.toSet() }
+        }.getOrDefault(emptySet())
+    }
+    var provenanceForeground by remember(lifecycle) {
+        mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+    }
+    DisposableEffect(lifecycle, ui, navigation) {
+        val observer = LifecycleEventObserver { _, _ ->
+            provenanceForeground = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            navigation.revalidate(ui.driveSnapshot.value, provenanceForeground)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer); navigation.home() }
+    }
+    val provenanceVisible = provenanceForeground && snapshot.state == DriveState.PARKED
+    fun photosAllowed() = provenanceForeground && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+        ui.driveSnapshot.value.let {
+            it.state == DriveState.PARKED && it.invalidationGeneration == displayedPhotoGeneration
+        }
+    fun paneAllowed(pane: P2HomePane) = photosAllowed() && navigation.state.value.pane == pane &&
+        (pane == P2HomePane.HOME || navigation.isCurrent(ui.driveSnapshot.value, provenanceForeground))
+    fun openPane(pane: P2HomePane) {
+        if (!saving && !photoSaving && !editor.isOpen && editor.pendingTarget == null && photosAllowed()) {
+            if (navigation.open(pane, ui.driveSnapshot.value, provenanceForeground, displayedPhotoGeneration)) photoNotice = null
+        }
+    }
+    fun decidePhoto(pane: P2HomePane, uri: String, decision: LinkState) {
+        if (!photoSaving && paneAllowed(pane)) {
+            photoSaving = true
+            scope.launch {
+                try {
+                    val result = if (paneAllowed(pane)) ui.setPhotoState(uri, decision) else PhotoReviewResult.BLOCKED
+                    if (paneAllowed(pane)) photoNotice = result.textResource()
+                } finally { photoSaving = false }
+            }
+        }
+    }
+    LaunchedEffect(snapshot.state, snapshot.invalidationGeneration, provenanceForeground) {
+        navigation.revalidate(ui.driveSnapshot.value, provenanceForeground)
+    }
+    val pane = if (navigation.isCurrent(ui.driveSnapshot.value, provenanceForeground)) navigationState.pane else P2HomePane.HOME
+    BackHandler(enabled = navigationState.pane != P2HomePane.HOME) { navigation.home() }
 
     LaunchedEffect(snapshot.state, snapshot.invalidationGeneration) {
         if (snapshot.state != DriveState.PARKED || snapshot.invalidationGeneration != editor.openedGeneration) {
@@ -131,84 +177,112 @@ fun MemoryVaultScreen(
         }
     }
 
+    val day = if (provenanceVisible && photosAllowed() && pane != P2HomePane.SETTINGS) {
+        val observed by ui.day.collectAsStateWithLifecycle(initialValue = DayDraftState.Loading)
+        observed
+    } else DayDraftState.Loading
+
     Scaffold { insets ->
-        Column(
-            Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge)
-            Text(stringResource(R.string.replay_capture_reference))
-            if (snapshot.state == DriveState.PARKED) {
-                Text(stringResource(R.string.day_draft), style = MaterialTheme.typography.headlineMedium)
-                Text(stringResource(R.string.demo_reference, DemoConfig.DEMO_DATE.toString(), DemoConfig.DEMO_ZONE.id))
-                app.memoryvault.share.ui.ShareSavedReceiptNotice(ui.driveSnapshot, DemoConfig.DEMO_DATE.toString())
-                OutlinedButton(onClick = { if (photosAllowed()) onShareDay() },
-                    modifier = Modifier.heightIn(min = 64.dp).testTag("open-share")) {
-                    Text(stringResource(R.string.share_open_day))
-                }
-                ParkedSetup(
-                    readyEnabled, permissionSummary,
-                    onPermissions = { if (ui.driveSnapshot.value.state == DriveState.PARKED) onRequestPermissions() },
-                    onReady = { ui.setReadyNotificationEnabled(!ui.readyNotificationEnabled.value) },
-                )
-                VoiceControls(snapshot.state, voice, onStart = {
-                    if (ui.driveSnapshot.value.state == DriveState.DRIVING) ui.startVoice()
-                }, onCancel = ui::cancelVoice)
-                PhotoSetup(photoReview, photoNotice, photoSaving,
-                    onPermissions = { if (photosAllowed()) onRequestPhotoPermissions() },
-                    onRefresh = { if (photosAllowed()) ui.refreshPhotos() },
-                )
-                MemoryLinkEntry(ui.driveSnapshot, ui.aiProgress)
-                CaptureEntry(ui.driveSnapshot)
-                app.memoryvault.memory.ui.MemoryAssociationEntry(ui.driveSnapshot)
-                typedNotice?.let { Text(stringResource(it), modifier = Modifier.testTag("typed-result")) }
-                if (editor.visitId != null && editor.text.isNotEmpty() && !editor.isOpen && editor.pendingTarget == null) {
-                    OutlinedButton(
-                        onClick = {
-                            val current = ui.driveSnapshot.value
-                            editor = editor.resume(current.state, current.invalidationGeneration)
-                            typedNotice = null
-                        },
-                        enabled = !saving, modifier = Modifier.heightIn(min = 64.dp),
-                    ) { Text(stringResource(R.string.memo_resume)) }
-                }
-                val day by ui.day.collectAsStateWithLifecycle(initialValue = DayDraftState.Loading)
-                when (val state = day) {
-                    DayDraftState.Loading -> Text(stringResource(R.string.storage_loading))
-                    DayDraftState.Failed -> Text(stringResource(R.string.storage_unavailable))
-                    is DayDraftState.Ready -> DayContent(
-                        state.draft, editingEnabled = !saving,
-                        onAdd = { id ->
-                            val current = ui.driveSnapshot.value
-                            editor = editor.openAdd(id, current.state, current.invalidationGeneration)
-                            typedNotice = null
-                        },
-                        onEdit = { note ->
-                            val current = ui.driveSnapshot.value
-                            editor = editor.openEdit(note, current.state, current.invalidationGeneration)
-                            typedNotice = null
-                        },
-                        photoAccess = photoReview.permissions.access != PhotoAccess.DENIED,
-                        ui = ui, thumbnailEpoch = photoReview.thumbnailEpoch,
-                        photoActionsEnabled = !photoSaving,
-                        onPhotoDecision = { uri, decision ->
-                            if (photosAllowed() && !photoSaving) {
-                                photoSaving = true
-                                scope.launch {
-                                    try {
-                                        photoNotice = (if (photosAllowed()) ui.setPhotoState(uri, decision)
-                                            else PhotoReviewResult.BLOCKED).textResource()
-                                    } finally { photoSaving = false }
+        when (pane) {
+            P2HomePane.SETTINGS -> SettingsScreen(onHome = navigation::home, modifier = Modifier.padding(insets),
+                voice = {
+                    ParkedSetup(readyEnabled, permissionSummary,
+                        onPermissions = { if (paneAllowed(P2HomePane.SETTINGS)) onRequestPermissions() },
+                        onReady = { if (paneAllowed(P2HomePane.SETTINGS)) ui.setReadyNotificationEnabled(!ui.readyNotificationEnabled.value) })
+                }, photos = {
+                    PhotoSetup(photoReview, photoNotice, photoSaving,
+                        onPermissions = { if (paneAllowed(P2HomePane.SETTINGS)) onRequestPhotoPermissions() },
+                        onRefresh = { if (paneAllowed(P2HomePane.SETTINGS)) ui.refreshPhotos() })
+                }, ai = { MemoryLinkEntry(ui.driveSnapshot, ui.aiProgress) })
+            P2HomePane.PHOTOS -> {
+                val epochAllowed = photoReview.thumbnailEpoch?.let {
+                    it.driveGeneration == displayedPhotoGeneration && ui.thumbnailAllowed(it)
+                } ?: false
+                PhotoAlbumScreen(day, photoReview, ui,
+                    contentAllowed = navigation.canShowPhotos(ui.driveSnapshot.value, photosAllowed(), photoReview.permissions.access, epochAllowed),
+                    busy = photoSaving, notice = photoNotice,
+                    onDecision = { uri, decision -> decidePhoto(P2HomePane.PHOTOS, uri, decision) },
+                    onHome = navigation::home, onSettings = { openPane(P2HomePane.SETTINGS) }, modifier = Modifier.padding(insets))
+            }
+            P2HomePane.HOME -> P2ScreenColumn(Modifier.padding(insets)) {
+                if (snapshot.state != DriveState.DRIVING)
+                    Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge)
+                P2RecordShareActions(showShare = snapshot.state == DriveState.PARKED,
+                    record = { actionModifier ->
+                        VoiceControls(snapshot.state, voice, onStart = {
+                            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+                                ui.driveSnapshot.value.state != DriveState.TRANSITION && !ui.voiceState.value.isBusy) ui.startVoice()
+                        }, onCancel = { if (ui.voiceState.value.isBusy) ui.cancelVoice() },
+                            onFinish = { if (ui.voiceState.value == app.memoryvault.service.VoiceServiceState.Listening) ui.finishVoice() },
+                            timing = voiceTiming, modifier = actionModifier)
+                    }, share = { actionModifier ->
+                        Card(actionModifier) {
+                            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Text(stringResource(R.string.p2_share_eyebrow), style = MaterialTheme.typography.labelMedium)
+                                Text(stringResource(R.string.p2_share_title), style = MaterialTheme.typography.headlineMedium)
+                                Text(stringResource(R.string.p2_share_help))
+                                OutlinedButton(onClick = {
+                                    if (photosAllowed() && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) onShareDay()
+                                }, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("open-share")) {
+                                    Text(stringResource(R.string.p2_share_open))
                                 }
                             }
-                        },
-                    )
+                        }
+                    })
+                if (provenanceVisible && photosAllowed()) {
+                    val shownDraft = (day as? DayDraftState.Ready)?.draft
+                    P2ActionPair(first = { actionModifier ->
+                        OutlinedButton(onClick = { openPane(P2HomePane.PHOTOS) }, enabled = !saving && !photoSaving,
+                            modifier = actionModifier.heightIn(min = 64.dp).testTag("open-photo-album")) {
+                            Text(stringResource(R.string.p2_photo_album))
+                        }
+                    }, second = { actionModifier ->
+                        OutlinedButton(onClick = { openPane(P2HomePane.SETTINGS) }, enabled = !saving && !photoSaving,
+                            modifier = actionModifier.heightIn(min = 64.dp).testTag("open-settings")) {
+                            Text(stringResource(R.string.p2_settings))
+                        }
+                    })
+                    Text(stringResource(R.string.day_draft), style = MaterialTheme.typography.headlineMedium)
+                    shownDraft?.let { RecordDatePicker(ui, it.date) }
+                    typedNotice?.let { Text(stringResource(it), modifier = Modifier.testTag("typed-result")) }
+                    if (editor.visitId != null && editor.text.isNotEmpty() && !editor.isOpen && editor.pendingTarget == null) {
+                        OutlinedButton(
+                            onClick = {
+                                val current = ui.driveSnapshot.value
+                                editor = editor.resume(current.state, current.invalidationGeneration)
+                                typedNotice = null
+                            },
+                            enabled = !saving, modifier = Modifier.heightIn(min = 64.dp),
+                        ) { Text(stringResource(R.string.memo_resume)) }
+                    }
+                    when (val state = day) {
+                        DayDraftState.Loading -> Text(stringResource(R.string.storage_loading))
+                        DayDraftState.Failed -> Text(stringResource(R.string.storage_unavailable))
+                        is DayDraftState.Ready -> DayContent(
+                            state.draft, editingEnabled = !saving,
+                            provenanceVisible = provenanceVisible, knownReplayVisits = knownReplayVisits,
+                            onAdd = { id ->
+                                val current = ui.driveSnapshot.value
+                                editor = editor.openAdd(id, current.state, current.invalidationGeneration)
+                                typedNotice = null
+                            },
+                            onEdit = { note ->
+                                val current = ui.driveSnapshot.value
+                                editor = editor.openEdit(note, current.state, current.invalidationGeneration)
+                                typedNotice = null
+                            },
+                            photoAccess = photoReview.permissions.access != PhotoAccess.DENIED,
+                            ui = ui, thumbnailEpoch = photoReview.thumbnailEpoch,
+                            photoActionsEnabled = !photoSaving,
+                            onPhotoDecision = { uri, decision -> decidePhoto(P2HomePane.HOME, uri, decision) },
+                        )
+                    }
+                    P2SectionHeading(stringResource(R.string.p2_home_tools))
+                    CaptureEntry(ui.driveSnapshot)
+                    app.memoryvault.memory.ui.MemoryAssociationEntry(ui.driveSnapshot)
+                } else {
+                    if (snapshot.state != DriveState.DRIVING && snapshot.state != DriveState.PARKED) LockedStatus(snapshot, ui::retryVehicleConnection)
                 }
-            } else {
-                if (snapshot.state != DriveState.DRIVING) LockedStatus(snapshot, ui::retryVehicleConnection)
-                VoiceControls(snapshot.state, voice, onStart = {
-                    if (ui.driveSnapshot.value.state == DriveState.DRIVING) ui.startVoice()
-                }, onCancel = ui::cancelVoice)
             }
         }
     }
@@ -300,17 +374,16 @@ fun MemoryVaultScreen(
 private fun ParkedSetup(ready: Boolean, permissionSummary: Int, onPermissions: () -> Unit, onReady: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(stringResource(R.string.parked_setup), style = MaterialTheme.typography.titleLarge)
-            Text(stringResource(permissionSummary))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                OutlinedButton(onClick = onPermissions, modifier = Modifier.weight(1f).heightIn(min = 64.dp)) {
+            Text(stringResource(R.string.p2_parked_setup), style = MaterialTheme.typography.titleLarge)
+            P2ActionPair(first = { actionModifier ->
+                OutlinedButton(onClick = onPermissions, modifier = actionModifier.heightIn(min = 64.dp)) {
                     Text(stringResource(R.string.voice_permissions_setup))
                 }
-                OutlinedButton(onClick = onReady, modifier = Modifier.weight(1f).heightIn(min = 64.dp)) {
+            }, second = { actionModifier ->
+                OutlinedButton(onClick = onReady, modifier = actionModifier.heightIn(min = 64.dp)) {
                     Text(stringResource(if (ready) R.string.voice_ready_disable_button else R.string.voice_ready_enable_button))
                 }
-            }
-            Text(stringResource(R.string.voice_ready_help))
+            })
         }
     }
 }
@@ -320,11 +393,11 @@ private fun LockedStatus(snapshot: DriveSnapshot, onRetry: () -> Unit) {
     val transition = snapshot.state == DriveState.TRANSITION
     Text(stringResource(if (transition) R.string.drive_transition else R.string.drive_unknown), style = MaterialTheme.typography.titleLarge)
     Text(stringResource(when {
-        transition -> R.string.drive_transition_help
-        snapshot.readinessReason == DriveReadinessReason.PERMISSION_DENIED -> R.string.drive_permission_missing
+        transition -> R.string.p2_drive_transition_help
+        snapshot.readinessReason == DriveReadinessReason.PERMISSION_DENIED -> R.string.p2_drive_permission_missing
         snapshot.readinessReason in setOf(DriveReadinessReason.CONNECTING, DriveReadinessReason.NOT_STARTED,
             DriveReadinessReason.MISSING_GEAR, DriveReadinessReason.MISSING_SPEED, DriveReadinessReason.MISSING_UX) -> R.string.drive_connecting
-        else -> R.string.drive_unavailable_help
+        else -> R.string.p2_drive_unavailable_help
     }))
     if (!transition) {
         Text(stringResource(R.string.initial_vehicle_permission_help))
@@ -338,6 +411,8 @@ private fun LockedStatus(snapshot: DriveSnapshot, onRetry: () -> Unit) {
 private fun DayContent(
     draft: DayDraft,
     editingEnabled: Boolean,
+    provenanceVisible: Boolean,
+    knownReplayVisits: Set<Visit>,
     onAdd: (String) -> Unit,
     onEdit: (Note) -> Unit,
     photoAccess: Boolean,
@@ -346,14 +421,10 @@ private fun DayContent(
     photoActionsEnabled: Boolean,
     onPhotoDecision: (String, LinkState) -> Unit,
 ) {
-    if (photoAccess && draft.unlinkedPhotos.isNotEmpty()) Text(stringResource(R.string.photo_unlinked_count, draft.unlinkedPhotos.size))
-    if (draft.inaccessiblePhotoCount > 0) Text(stringResource(R.string.photo_inaccessible_count, draft.inaccessiblePhotoCount))
-    Text(stringResource(R.string.pending_voice_title), style = MaterialTheme.typography.titleLarge)
-    if (draft.pendingNotes.isEmpty()) Text(stringResource(R.string.pending_voice_empty))
     draft.pendingNotes.forEach { note ->
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                MemoContent(note, emptyList(), editingEnabled, onEdit, ui.aiProgress)
+                MemoContent(note, emptyList(), editingEnabled, onEdit, ui.aiProgress, provenanceVisible)
             }
         }
     }
@@ -363,8 +434,8 @@ private fun DayContent(
                 Text(card.visit.placeName, style = MaterialTheme.typography.titleLarge)
                 Text("${formatTime(card.visit.arrivedAt)} – ${formatTime(card.visit.leftAt)}")
                 if (card.notes.isEmpty()) Text(stringResource(R.string.memo_empty))
-                card.notes.forEach { MemoContent(it, card.noteLinks, editingEnabled, onEdit, ui.aiProgress) }
-                if (photoAccess) PhotoList(card.photos, photoActionsEnabled, onPhotoDecision, ui, thumbnailEpoch)
+                card.notes.forEach { MemoContent(it, card.noteLinks, editingEnabled, onEdit, ui.aiProgress, provenanceVisible) }
+                if (photoAccess) PhotoList(card.photos, photoActionsEnabled, onPhotoDecision, ui, thumbnailEpoch, provenanceVisible)
                 else Text(stringResource(R.string.photo_access_card_hidden))
                 OutlinedButton(onClick = { onAdd(card.visit.id) }, enabled = editingEnabled, modifier = Modifier.heightIn(min = 64.dp)) {
                     Text(stringResource(R.string.memo_add))
@@ -375,15 +446,9 @@ private fun DayContent(
 }
 
 @Composable
-private fun MemoContent(note: Note, links: List<NoteVisitLink>, editingEnabled: Boolean, onEdit: (Note) -> Unit, aiProgress: StateFlow<MemoryLinkProgress>) {
+private fun MemoContent(note: Note, links: List<NoteVisitLink>, editingEnabled: Boolean, onEdit: (Note) -> Unit,
+    aiProgress: StateFlow<MemoryLinkProgress>, provenanceVisible: Boolean) {
     val presentation = presentationOf(note, links)
-    if (presentation == NotePresentation.VOICE_PENDING) MemoryLinkNoteStatus(note.id, aiProgress)
-    else Text(stringResource(when (presentation) {
-        NotePresentation.TYPED -> R.string.memo_typed
-        NotePresentation.VOICE_PENDING -> R.string.memo_voice_pending
-        NotePresentation.VOICE_SUGGESTED -> R.string.memo_voice_suggested
-        NotePresentation.VOICE_CONFIRMED -> R.string.memo_voice_confirmed
-    }))
     Text(note.text)
     if (presentation.editable) {
         OutlinedButton(onClick = { onEdit(note) }, enabled = editingEnabled, modifier = Modifier.heightIn(min = 64.dp)) {

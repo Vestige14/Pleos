@@ -38,12 +38,11 @@ fun MemoryLinkEntry(driveSnapshot: StateFlow<DriveSnapshot>, progressState: Stat
                 Text(stringResource(R.string.ai_title), style = MaterialTheme.typography.titleLarge)
                 Text(stringResource(if (progress.available) R.string.ai_summary else R.string.ai_preparing,
                     progress.waiting, progress.suggested, progress.review, progress.blocked))
-                Text(stringResource(R.string.ai_suggestion_notice))
                 progress.notes.values.firstOrNull { it.state == AiLinkJobState.BLOCKED }?.error?.let { FixedError(it) }
                 Button(onClick = { if (allowed()) context.startActivity(Intent(context, MemoryLinkSetupActivity::class.java)) },
-                    modifier = Modifier.heightIn(min = 64.dp)) { Text(stringResource(R.string.ai_enter_setup)) }
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)) { Text(stringResource(R.string.ai_enter_setup)) }
                 OutlinedButton(onClick = { if (allowed()) MemoryLinkRuntime.reconcilePendingJobs(context) },
-                    modifier = Modifier.heightIn(min = 64.dp)) { Text(stringResource(R.string.ai_reconcile)) }
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)) { Text(stringResource(R.string.ai_reconcile)) }
             }
         }
     }

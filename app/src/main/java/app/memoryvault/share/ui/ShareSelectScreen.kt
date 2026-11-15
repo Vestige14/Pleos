@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -46,9 +47,10 @@ internal fun ShareSelectScreen(
     val enabled = selected != null && !state.persistenceFailed
     Column(Modifier.fillMaxWidth().testTag("share-select"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(stringResource(R.string.share_title), style = MaterialTheme.typography.headlineMedium)
-        Text(state.input?.date.orEmpty())
-        Text(stringResource(R.string.share_privacy))
-        Text(stringResource(R.string.share_photo_pixels))
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)) {
+            Text(stringResource(R.string.p2_back_home))
+        }
+        Text(state.input?.date.orEmpty(), style = MaterialTheme.typography.titleMedium)
         if (state.persistenceFailed) {
             Text(stringResource(R.string.share_selection_failed))
             OutlinedButton(onClick = onRetry, modifier = Modifier.heightIn(min = 64.dp)) { Text(stringResource(R.string.share_retry)) }
@@ -61,7 +63,7 @@ internal fun ShareSelectScreen(
                     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("share-visit-${visit.id}")
                         .toggleable(included, enabled = enabled, role = Role.Switch, onValueChange = { onVisit(visit.id, it) }),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(stringResource(R.string.share_include_visit))
+                        Text(stringResource(R.string.share_include_visit), modifier = Modifier.weight(1f).padding(end = 8.dp))
                         Switch(checked = included, onCheckedChange = null, enabled = enabled)
                     }
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -83,7 +85,6 @@ internal fun ShareSelectScreen(
                     OutlinedTextField(value = selected?.captions?.get(visit.id).orEmpty(),
                         onValueChange = { onCaption(visit.id, it) }, enabled = enabled && included,
                         label = { Text(stringResource(R.string.share_caption)) },
-                        supportingText = { Text(stringResource(R.string.share_caption_help)) },
                         modifier = Modifier.fillMaxWidth().testTag("share-caption-${visit.id}"))
                 }
             }
@@ -92,8 +93,11 @@ internal fun ShareSelectScreen(
         if (!canPreview && !state.persistenceFailed && !state.saving) Text(stringResource(R.string.share_no_visits))
         Button(onClick = onPreview, enabled = canPreview, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
             .testTag("share-preview-button")) { Text(stringResource(R.string.share_preview)) }
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)) {
-            Text(stringResource(R.string.share_back_day))
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.share_privacy))
+                Text(stringResource(R.string.share_photo_pixels))
+            }
         }
     }
 }

@@ -10,6 +10,12 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface VisitDao {
+    @Query("SELECT DISTINCT date FROM visits ORDER BY date")
+    fun observeDates(): Flow<List<String>>
+
+    @Query("UPDATE visits SET placeName = :newName WHERE id = :id AND date = :date AND placeName = :oldName")
+    suspend fun renamePreparedVisit(id: String, date: String, oldName: String, newName: String)
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(visits: List<Visit>)
 

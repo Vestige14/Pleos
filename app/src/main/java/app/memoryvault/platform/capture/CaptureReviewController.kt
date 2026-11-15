@@ -13,7 +13,7 @@ interface CaptureAudioPlayer {
 }
 
 data class CaptureReviewState(val visible: Boolean = false, val items: List<CaptureArtifact> = emptyList(),
-    val playingSession: String? = null, val failed: Boolean = false)
+    val playingSession: String? = null, val failed: Boolean = false, val loading: Boolean = false)
 
 class CaptureReviewController(
     private val drive: () -> DriveSnapshot,
@@ -38,14 +38,18 @@ class CaptureReviewController(
 
     suspend fun open() {
         val current = drive()
-        if (!foreground || current.state != DriveState.PARKED) return
+        if (!foreground || current.state != DriveState.PARKED || mutableState.value.loading) return
         stop()
         val opening = ++epoch
         openedGeneration = current.invalidationGeneration
+        mutableState.value = CaptureReviewState(loading = true)
         try {
             val items = load()
             if (allowed(opening, current.invalidationGeneration)) mutableState.value = CaptureReviewState(visible = true, items = items)
-        } catch (cancelled: CancellationException) { throw cancelled }
+        } catch (cancelled: CancellationException) {
+            if (allowed(opening, current.invalidationGeneration)) hide()
+            throw cancelled
+        }
         catch (_: Exception) {
             if (allowed(opening, current.invalidationGeneration)) mutableState.value = CaptureReviewState(visible = true, failed = true)
         }

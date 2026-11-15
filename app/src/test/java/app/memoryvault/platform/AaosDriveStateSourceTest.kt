@@ -3,7 +3,6 @@ package app.memoryvault.platform
 import app.memoryvault.domain.DriveState
 import app.memoryvault.domain.VoiceMemoOutcome
 import app.memoryvault.domain.VoiceMemoUseCase
-import app.memoryvault.domain.VoiceCancelReason
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
@@ -62,7 +61,7 @@ class AaosDriveStateSourceTest {
             assertEquals(first + 2, it.snapshot.invalidationGeneration)
         }
     }
-    @Test fun `production bridge rejects authoritative UNKNOWN before queued state consumers run`() = runTest {
+    @Test fun `production bridge exposes authoritative UNKNOWN while explicit recording remains available`() = runTest {
         fixture().use { fixture ->
             fixture.connect()
             fixture.access.emitUx(UxReading(true, 80))
@@ -74,16 +73,16 @@ class AaosDriveStateSourceTest {
             val useCase = VoiceMemoUseCase(bridge.state, { _, text, _ -> saved += text; 31L }, driveSafety = bridge)
             fixture.access.emitUx(UxReading(false, 80))
             assertEquals(DriveState.UNKNOWN, fixture.snapshot.state)
-            val input = GateInput(flowOf(SpeechEvent.Final("must not start")))
-            assertEquals(VoiceMemoOutcome.Blocked, useCase.record("stale-gate", 1L, input))
+            val input = GateInput(flowOf(SpeechEvent.Final("unknown raw")))
+            assertEquals(VoiceMemoOutcome.Saved(31L), useCase.record("explicit-unknown", 1L, input))
             assertEquals(DriveState.UNKNOWN, bridge.state.value)
-            assertEquals(0, input.eventsCalls)
-            assertTrue(input.cleanup.isEmpty())
-            assertTrue(saved.isEmpty())
+            assertEquals(1, input.eventsCalls)
+            assertEquals(listOf("cancel", "close"), input.cleanup)
+            assertEquals(listOf("unknown raw"), saved)
         }
     }
 
-    @Test fun `production queued bridge preserves short UNKNOWN across recovery and permits a fresh session`() = runTest {
+    @Test fun `production queued bridge preserves short UNKNOWN while the accepted session continues`() = runTest {
         fixture().use { fixture ->
             fixture.connect()
             fixture.access.emitUx(UxReading(true, 80))
@@ -101,16 +100,16 @@ class AaosDriveStateSourceTest {
             assertEquals(DriveState.DRIVING, fixture.snapshot.state)
             input.events.trySend(SpeechEvent.Final("stale final"))
             runCurrent()
-            assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.UNKNOWN), run.await())
-            assertTrue(saved.isEmpty())
+            assertEquals(VoiceMemoOutcome.Saved(31L), run.await())
+            assertEquals(listOf("stale final"), saved)
             assertEquals(listOf("cancel", "close"), input.cleanup)
             assertEquals(VoiceMemoOutcome.Saved(31L), useCase.record("fresh", 2L,
                 GateInput(flowOf(SpeechEvent.Final("fresh raw")))))
-            assertEquals(listOf("fresh raw"), saved)
+            assertEquals(listOf("stale final", "fresh raw"), saved)
         }
     }
 
-    @Test fun `production queued invalidation during storage cannot claim Saved after recovery`() = runTest {
+    @Test fun `production queued invalidation during storage does not cancel an accepted save`() = runTest {
         fixture().use { fixture ->
             fixture.connect()
             fixture.access.emitUx(UxReading(true, 80))
@@ -130,7 +129,7 @@ class AaosDriveStateSourceTest {
             fixture.access.emitUx(UxReading(true, 80))
             mayReturn.complete(Unit)
             runCurrent()
-            assertEquals(VoiceMemoOutcome.Cancelled(VoiceCancelReason.UNKNOWN), run.await())
+            assertEquals(VoiceMemoOutcome.Saved(31L), run.await())
             assertEquals(listOf("committed"), committed)
             assertEquals(listOf("cancel", "close"), input.cleanup)
         }

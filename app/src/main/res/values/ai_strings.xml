@@ -12,10 +12,10 @@
     <string name="ai_session_label">개발 세션 토큰</string>
     <string name="ai_save">저장하고 대기 작업 재개</string>
     <string name="ai_saving">암호화해 저장 중</string>
-    <string name="ai_not_configured">연결 정보가 없습니다. 원문은 기기에 보관됩니다.</string>
+    <string name="ai_not_configured">AI 연결 해제 · 서버 연결을 설정해 주세요.</string>
     <string name="ai_configured">세션 토큰 저장됨 · ••••••••</string>
     <string name="ai_endpoint_saved">개발 서버: %1$s</string>
-    <string name="ai_back">하루 초안으로 돌아가기</string>
+    <string name="ai_back">기록으로 돌아가기</string>
     <string name="ai_park_required">주차·전경 상태에서만 연결 정보를 입력할 수 있습니다.</string>
     <string name="ai_saved">연결 정보를 암호화해 저장했습니다. 대기 작업을 다시 확인합니다.</string>
     <string name="ai_invalid_endpoint">로컬 개발 서버 주소와 포트를 확인해 주세요. 배포 빌드에서는 HTTP를 사용할 수 없습니다.</string>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission tools:node="removeAll" />
+    <uses-permission-sdk-23 tools:node="removeAll" />
+    <permission tools:node="removeAll" />
+    <queries tools:node="remove" />
+    <application android:allowBackup="false" android:usesCleartextTraffic="false"
+        tools:node="replace">
+        <!-- AndroidX Test core 1.7.0 uses this explicit component to finish ActivityScenario. -->
+        <activity android:name="androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity"
+            android:exported="true" android:theme="@style/WhiteBackgroundTheme" />
+    </application>
+</manifest>

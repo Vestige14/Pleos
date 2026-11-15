@@ -165,10 +165,13 @@ class VoiceMemoService : Service() {
             instance?.controller?.cancel()
         }
 
+        /** Returns acknowledgement of capture stop, never acknowledgement of a saved memo. */
+        fun requestFinish(): Boolean =
+            pending.get() && !cancelPending.get() && (instance?.controller?.finishCapture() == true)
+
         private fun preflight(container: AppContainer): VoiceStartBlock? =
             container.notifications.availability().block()
-                ?: if (container.driveSnapshot.value.state == DriveState.PARKED) VoiceStartBlock.PARKED
-                else if (container.driveSnapshot.value.state == DriveState.TRANSITION) VoiceStartBlock.UNKNOWN
+                ?: if (container.driveSnapshot.value.state == DriveState.TRANSITION) VoiceStartBlock.UNKNOWN
                 else if (container.storageReadiness.value == StorageReadiness.FAILED) VoiceStartBlock.STORAGE_UNAVAILABLE
                 else null
     }
